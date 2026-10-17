@@ -94,7 +94,7 @@ async function create() {
     let lastErr = null;
     for (let i = 0; i < 4; i++) {
       try {
-        await net.host(makeCode());
+        await net.host(i === 0 && params.get('code') ? params.get('code').toUpperCase() : makeCode());
         lastErr = null;
         break;
       } catch (e) {
@@ -173,9 +173,8 @@ if (room) {
   $('inp-code').value = room.toUpperCase();
   setStatus(`Invited to room ${room.toUpperCase()}: press Join.`);
 }
-// ?auto: skip the clicks (used for automated testing).
+// ?auto: skip the clicks (used for automated testing with ?emu, see duo.html).
 if (params.has('auto')) {
-  if (room) join(room);
-  else if (params.has('host')) create();
-  else if (params.has('solo')) solo();
+  const start = room ? join(room) : params.has('host') ? create() : params.has('solo') ? solo() : null;
+  if (start && params.has('vr')) start.then(() => app && enterVR());
 }

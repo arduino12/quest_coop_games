@@ -70,8 +70,13 @@ export class Label {
       ctx.fill();
     }
     const lines = this.text.split('\n');
-    const fs = (H * this.opts.size) / lines.length;
+    let fs = (H * this.opts.size) / lines.length;
     ctx.font = `${this.opts.weight} ${fs}px ${FONT}`;
+    const widest = Math.max(1, ...lines.map((l) => ctx.measureText(l).width));
+    if (widest > W * 0.92) {
+      fs *= (W * 0.92) / widest; // shrink to fit instead of squashing letters
+      ctx.font = `${this.opts.weight} ${fs}px ${FONT}`;
+    }
     ctx.fillStyle = this.opts.color;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

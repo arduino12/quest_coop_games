@@ -19,7 +19,7 @@ export const BLOCKS = {
   [TYPE.plank]: { size: [1.2, 0.2, 0.4], density: 1 },
   [TYPE.pillar]: { size: [0.25, 1.0, 0.25], density: 1 },
   [TYPE.crystal]: { size: [0.3, 0.6, 0.3], density: 0.6 },
-  [TYPE.ball]: { radius: 0.22, density: 20 },
+  [TYPE.ball]: { radius: 0.22, density: 6 },
 };
 
 // Island-local layout.

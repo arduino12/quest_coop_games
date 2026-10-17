@@ -56,7 +56,7 @@ export class App {
     this.camera.add(this.toastLabel.mesh);
     this.toastTime = 0;
 
-    this.clock = new THREE.Clock();
+    this.lastFrame = performance.now();
     this._wireNet();
     this._wireDesktop();
     window.addEventListener('resize', () => {
@@ -111,9 +111,9 @@ export class App {
     this.avatar.setVisible(true);
     this.toast('Partner connected!');
     this.sfx.powerup();
+    // The host restarts whatever is running so both players start it together as 2-player.
     if (this.role === 'guest') this.net.send('hello', {});
-    else if (this.gameId && this.gameId !== 'lobby') this.requestGame(this.gameId, this.gameOpts); // restart as 2-player
-    else this.net.send('game', { id: this.gameId, seq: this.gameSeq, opts: this.gameOpts });
+    else this.requestGame(this.gameId || 'lobby', this.gameOpts);
   }
 
   onPartnerDisconnect() {
@@ -235,7 +235,9 @@ export class App {
   }
 
   frame() {
-    const dt = Math.min(this.clock.getDelta(), 1 / 20);
+    const now = performance.now();
+    const dt = Math.min((now - this.lastFrame) / 1000, 1 / 20);
+    this.lastFrame = now;
     this.time += dt;
     try {
       for (const h of this.hands) h.update(dt);

@@ -743,6 +743,7 @@ export class Starship extends Game {
         this.phase = 'over';
         this.st.score = d.score;
         this.st.wave = d.wave;
+        this.st.hull = 0;
         this.onOver();
         break;
       default:
