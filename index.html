@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quest Co-op Games</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="overlay">
+      <div class="card">
+        <h1>Quest Co-op Games</h1>
+        <p class="sub">Neon Handball · Fort Siege · Starship Bridge</p>
+
+        <section id="step-room">
+          <button id="btn-create" class="big">Create a room</button>
+          <div class="row">
+            <input id="inp-code" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+            <button id="btn-join">Join</button>
+          </div>
+          <button id="btn-solo" class="ghost">Play solo (practice)</button>
+          <label class="check"><input type="checkbox" id="chk-voice" checked /> Voice chat (uses your microphone)</label>
+        </section>
+
+        <section id="step-ready" hidden>
+          <div id="room-info"></div>
+          <button id="btn-vr" class="big">Enter VR</button>
+          <button id="btn-leave" class="ghost">Leave room</button>
+        </section>
+
+        <p id="status"></p>
+        <p class="hint">
+          One player creates a room and sends the 4-letter code (or the invite link) to the other.
+          Both put on the headset and press <b>Enter VR</b>.
+        </p>
+      </div>
+    </div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
