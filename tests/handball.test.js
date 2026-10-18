@@ -12,6 +12,17 @@ describe('stepBall', () => {
     expect(b.p[0]).toBeLessThanOrEqual(T.halfW - T.ballR);
   });
 
+  it('keeps the ball between the raised floor and the lowered ceiling', () => {
+    const low = liveBall([0, T.floorY + T.ballR + 0.01, 0], [0, -3, 1]);
+    stepBall(low, 0.1);
+    expect(low.v[1]).toBeGreaterThan(0);
+    expect(low.p[1]).toBeGreaterThanOrEqual(T.floorY + T.ballR);
+    const high = liveBall([0, T.ceilY - T.ballR - 0.01, 0], [0, 3, 1]);
+    stepBall(high, 0.1);
+    expect(high.v[1]).toBeLessThan(0);
+    expect(high.p[1]).toBeLessThanOrEqual(T.ceilY - T.ballR);
+  });
+
   it('reports which back wall the ball passed', () => {
     expect(stepBall(liveBall([0, 1, T.halfL - 0.01], [0, 0, 5]), 0.1).goal).toBe('host');
     expect(stepBall(liveBall([0, 1, -T.halfL + 0.01], [0, 0, -5]), 0.1).goal).toBe('guest');

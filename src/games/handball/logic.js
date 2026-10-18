@@ -5,7 +5,8 @@
 // There is no gravity and walls bounce perfectly, so between hits the ball's path is fully
 // deterministic and both players can simulate it identically.
 
-export const T = { halfL: 7, halfW: 1.5, H: 2.6, ballR: 0.12, handR: 0.13 };
+// The play space floats between floorY and ceilY so every bounce stays within arm's reach.
+export const T = { halfL: 7, halfW: 1.5, floorY: 0.7, ceilY: 2.0, ballR: 0.12, handR: 0.13 };
 export const WIN_SCORE = 7;
 export const MAX_SPEED = 14;
 export const MIN_FORWARD = 0.6; // after a hit, at least this fraction of the speed goes toward the opponent
@@ -13,7 +14,7 @@ export const MIN_FORWARD = 0.6; // after a hit, at least this fraction of the sp
 export const sideOf = (z) => (z >= 0 ? 'host' : 'guest');
 export const otherSide = (side) => (side === 'host' ? 'guest' : 'host');
 export const baseSpeed = (hits) => Math.min(4.5 + hits * 0.35, 12.5);
-export const servePos = (side) => [0, 1.2, side === 'host' ? 5.0 : -5.0];
+export const servePos = (side) => [0, 1.3, side === 'host' ? 5.0 : -5.0];
 
 export function newBall(server) {
   return { p: servePos(server), v: [0, 0, 0], hits: 0, live: false, server };
@@ -36,7 +37,7 @@ export function stepBall(b, dt, practiceWall = false) {
     if (b.p[k] > hi) { b.p[k] = 2 * hi - b.p[k]; b.v[k] = -Math.abs(b.v[k]); ev.bounce = true; }
   };
   reflect(0, -T.halfW + r, T.halfW - r);
-  reflect(1, r, T.H - r);
+  reflect(1, T.floorY + r, T.ceilY - r);
   if (b.p[2] > T.halfL) ev.goal = 'host';
   else if (b.p[2] < -T.halfL) {
     if (practiceWall) {

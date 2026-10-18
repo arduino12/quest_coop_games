@@ -46,7 +46,8 @@ export class Handball extends Game {
   }
 
   buildScene() {
-    const { halfL: L, halfW: W, H } = T;
+    const { halfL: L, halfW: W, floorY: F, ceilY: C } = T;
+    const H = C - F;
     const root = this.root;
     this.app.scene.background = new THREE.Color(0x04020f);
     this.app.scene.fog = new THREE.Fog(0x04020f, 14, 34);
@@ -55,18 +56,25 @@ export class Handball extends Game {
     const frameMat = lineMat(0x3355ff, 0.35);
     for (let z = -L; z <= L + 1e-6; z += 1) {
       const r = rectLoop(W * 2, H, z === 0 ? 0xffffff : 0x3355ff, z === 0 ? 0.6 : 0.35);
-      r.position.z = z;
+      r.position.set(0, F, z);
       root.add(r);
     }
     const pts = [];
     const seg = (a, b) => pts.push(new THREE.Vector3(...a), new THREE.Vector3(...b));
-    for (const x of [-W, -W / 2, 0, W / 2, W]) { seg([x, 0, -L], [x, 0, L]); seg([x, H, -L], [x, H, L]); }
-    for (const y of [H / 3, (2 * H) / 3]) { seg([-W, y, -L], [-W, y, L]); seg([W, y, -L], [W, y, L]); }
+    for (const x of [-W, -W / 2, 0, W / 2, W]) { seg([x, F, -L], [x, F, L]); seg([x, C, -L], [x, C, L]); }
+    for (const y of [F + H / 3, F + (2 * H) / 3]) { seg([-W, y, -L], [-W, y, L]); seg([W, y, -L], [W, y, L]); }
     root.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), frameMat));
 
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(W * 2, L * 2), new THREE.MeshBasicMaterial({ color: 0x0a0720 }));
-    floor.rotation.x = -Math.PI / 2;
-    root.add(floor);
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(W * 2 + 2, L * 2 + 2), new THREE.MeshBasicMaterial({ color: 0x0a0720 }));
+    ground.rotation.x = -Math.PI / 2;
+    root.add(ground);
+    // See-through floor of the play space, at hip height.
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(W * 2, L * 2), new THREE.MeshBasicMaterial({
+      color: 0x3355ff, transparent: true, opacity: 0.08, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    glass.rotation.x = -Math.PI / 2;
+    glass.position.y = F;
+    root.add(glass);
     // Standing pads at each end so players know where to be.
     for (const side of ['host', 'guest']) {
       const pad = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.5, 40), glowMat(COLORS[side], 0.7));
@@ -81,10 +89,10 @@ export class Handball extends Game {
       const wall = new THREE.Mesh(new THREE.PlaneGeometry(W * 2, H), new THREE.MeshBasicMaterial({
         color: COLORS[side], transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false,
       }));
-      wall.position.set(0, H / 2, z);
+      wall.position.set(0, F + H / 2, z);
       root.add(wall);
       const border = rectLoop(W * 2, H, COLORS[side], 1);
-      border.position.z = z;
+      border.position.set(0, F, z);
       root.add(border);
       this.goalWalls[side] = wall;
     }
@@ -101,6 +109,7 @@ export class Handball extends Game {
 
     // Depth cues: a frame that slides along the tunnel with the ball, plus a floor shadow.
     this.depthRing = rectLoop(W * 2, H, 0xffffff, 0.9);
+    this.depthRing.position.y = F;
     root.add(this.depthRing);
     this.shadow = new THREE.Mesh(new THREE.CircleGeometry(T.ballR * 1.2, 20), new THREE.MeshBasicMaterial({
       color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false,
@@ -120,7 +129,7 @@ export class Handball extends Game {
     this.boards = {};
     for (const side of ['host', 'guest']) {
       const label = new Label('', { w: 2.4, h: 0.5, res: 1024, size: 0.7 });
-      label.mesh.position.set(0, H + 0.45, 0);
+      label.mesh.position.set(0, C + 0.45, 0);
       if (side === 'guest') label.mesh.rotation.y = Math.PI;
       root.add(label.mesh);
       this.boards[side] = label;
@@ -268,7 +277,7 @@ export class Handball extends Game {
     this.flash[conceder] = 1;
     this.app.sfx.goal(scorer === this.mySide);
     const z = conceder === 'host' ? T.halfL : -T.halfL;
-    this.app.particles.burst([0, T.H / 2, z], COLORS[scorer], 60, 4, 0.8);
+    this.app.particles.burst([0, (T.floorY + T.ceilY) / 2, z], COLORS[scorer], 60, 4, 0.8);
   }
 
   restart() {
@@ -367,8 +376,8 @@ export class Handball extends Game {
     this.halo.scale.setScalar(1 + heat * 0.8 + (b.live ? 0 : Math.sin(t * 6) * 0.15));
     this.depthRing.position.z = b.p[2];
     this.depthRing.material.opacity = 0.35 + 0.5 * Math.abs(b.p[2]) / T.halfL;
-    this.shadow.position.set(b.p[0], 0.005, b.p[2]);
-    this.shadow.scale.setScalar(1 + b.p[1] * 0.3);
+    this.shadow.position.set(b.p[0], T.floorY + 0.005, b.p[2]);
+    this.shadow.scale.setScalar(1 + (b.p[1] - T.floorY) * 0.3);
 
     if (b.live && visible) this.trail.unshift(b.p[0], b.p[1], b.p[2]);
     else this.trail.length = 0;

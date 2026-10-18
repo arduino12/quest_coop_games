@@ -155,6 +155,7 @@ export class Net {
   }
 
   // reliable=false sends on the unreliable channel (falls back to reliable if needed).
+  // (LoopbackNet below overrides this.)
   send(t, d, reliable = true) {
     const c = reliable ? this.evt : (this.state?.open ? this.state : this.evt);
     if (!c || !c.open) return false;
@@ -165,5 +166,62 @@ export class Net {
       console.warn('[net] send failed', t, e);
       return false;
     }
+  }
+}
+
+// Dev-only transport (?loop): tabs or iframes of the same browser talk over a BroadcastChannel.
+// Lets duo.html test the games on a PC whose network blocks peer-to-peer (e.g. a VPN). No voice.
+export class LoopbackNet extends Net {
+  async host(code) {
+    this.id = 'host';
+    this.code = code;
+    this.role = 'host';
+    this._open(code);
+    this._startPing();
+  }
+
+  async join(code) {
+    this.id = `guest-${Math.random().toString(36).slice(2)}`;
+    this.code = code;
+    this._open(code);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`No room with code ${code}.`)), 5000);
+      this._onWelcome = () => { clearTimeout(timer); resolve(); };
+      this.ch.postMessage({ from: this.id, sys: 'join' });
+    });
+    this.role = 'guest';
+    this._startPing();
+    this.connected = true;
+    this.emit('connect');
+  }
+
+  _open(code) {
+    this.ch = new BroadcastChannel(`qcg-loop-${code}`);
+    this.ch.onmessage = (e) => {
+      const m = e.data;
+      if (m.from === this.id) return;
+      if (m.sys === 'join' && this.role === 'host') {
+        this.ch.postMessage({ from: this.id, sys: 'welcome', to: m.from });
+        if (!this.connected) { this.connected = true; this.emit('connect'); }
+      } else if (m.sys === 'welcome' && m.to === this.id) this._onWelcome?.();
+      else if (m.sys === 'bye' && this.connected) {
+        this.connected = false;
+        if (this.role === 'guest') this.role = 'solo';
+        this.emit('disconnect');
+      } else if (m.msg) this._onData(m.msg);
+    };
+    window.addEventListener('beforeunload', () => this.ch.postMessage({ from: this.id, sys: 'bye' }));
+  }
+
+  send(t, d) {
+    if (!this.connected) return false;
+    this.ch.postMessage({ from: this.id, msg: { t, d, ts: performance.now() } });
+    return true;
+  }
+
+  destroy() {
+    clearInterval(this.pingTimer);
+    this.ch?.close();
+    this.connected = false;
   }
 }

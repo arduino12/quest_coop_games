@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { Net } from './core/net.js';
+import { Net, LoopbackNet } from './core/net.js';
 import { App } from './core/app.js';
 import { Sfx } from './core/audio.js';
 import { getMic, Voice } from './core/voice.js';
@@ -16,8 +16,10 @@ if (params.has('emu')) {
 }
 
 const physicsReady = RAPIER.init();
+// ?loop: same-browser test transport (see duo.html); normal play uses WebRTC.
+const NetClass = params.has('loop') ? LoopbackNet : Net;
 const sfx = new Sfx();
-let net = new Net();
+let net = new NetClass();
 let app = null;
 let voice = null;
 let mic = null;
@@ -100,12 +102,12 @@ async function create() {
       } catch (e) {
         lastErr = e;
         net.destroy();
-        net = new Net();
+        net = new NetClass();
         if (e.type !== 'unavailable-id') break;
       }
     }
     if (lastErr) throw lastErr;
-    voice = new Voice(net, mic);
+    if (net.peer) voice = new Voice(net, mic);
     await startApp();
     showReady();
   } catch (e) {
@@ -121,12 +123,12 @@ async function join(code) {
     await prepareMic();
     setStatus(`Joining room ${code}…`);
     await net.join(code);
-    voice = new Voice(net, mic);
+    if (net.peer) voice = new Voice(net, mic);
     await startApp();
     showReady();
   } catch (e) {
     net.destroy();
-    net = new Net();
+    net = new NetClass();
     fail(e);
   }
 }

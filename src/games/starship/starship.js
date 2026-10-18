@@ -1,29 +1,51 @@
 import * as THREE from 'three';
 import { Game } from '../../core/game.js';
 import { Panel, Label } from '../../core/ui3d.js';
-import { Particles, edges, glowMat, lineMat } from '../../core/env.js';
-import { EntityBuffer, SnapshotBuffer, ClockSync, r2 } from '../../core/sync.js';
-import { COLORS, INTERP_DELAY_MS } from '../../config.js';
+import { Particles, edges, glowMat, lineMat, starfield } from '../../core/env.js';
+import { EntityBuffer, SnapshotBuffer, ClockSync, r2, r4 } from '../../core/sync.js';
+import { INTERP_DELAY_MS } from '../../config.js';
 import {
-  ET, LAT_SPEED, SPAWN_Z, ENGAGE_Z, PLASMA_SPEED, SHIELD_REGEN, REGEN_DELAY, BREACH_DRAIN, MAX_BREACHES,
-  BREACH_SPOTS, waveConfig, asteroidHp, collisionDamage, scoreFor, applyDamage, raySphere, hitsShip, clampShip,
+  ET, HIT_R, BODY_R, SCORE, DAMAGE, SECTOR_R, SHIP_R, YAW_RATE, PITCH_RATE, PITCH_MAX, MIN_SPEED, MAX_SPEED,
+  SHIELD_REGEN, REGEN_DELAY, BREACH_DRAIN, MAX_BREACHES, MINE_TRIGGER_R, MINE_BLAST_R, MINE_FUSE,
+  SEEKER_RANGE, SEEKER_SPEED, BREACH_SPOTS, generateSector, shipQuat, forward, leadTarget, raySphere,
+  applyDamage, mapProject, add, sub, scale, norm, dist, dot,
 } from './logic.js';
 
 const PILOT_X = -0.65;
 const GUNNER_X = 0.65;
 const STICK_BASE = new THREE.Vector3(PILOT_X + 0.3, 0.93, -0.45);
 const STICK_LEN = 0.16;
-const STARS = 500;
-const BOLT_SPEED = 320;
+const THROTTLE_BASE = new THREE.Vector3(PILOT_X - 0.34, 0.93, -0.42);
+const THROTTLE_TRAVEL = 0.24;
+const MAP_CENTER = new THREE.Vector3(0, 1.08, -0.5);
+const MAP_R = 0.22;
+const MAP_RANGE = 900;
+const NOSE_GUNS = [new THREE.Vector3(-1.3, 0.6, -1.7), new THREE.Vector3(1.3, 0.6, -1.7)];
+const BOLT_SPEED = 600;
+const BOLT_RANGE = 700;
+const DUST = 400;
+const DUST_BOX = 140;
+const MAX_MINES = 400;
+const MAX_ASTEROIDS = 60;
+const MAP_MINES = 300;
 const REPAIR_TIME = 1.2;
 const BEST_KEY = 'qcg-starship-best';
 const rand = (a, b) => a + Math.random() * (b - a);
-const _o = new THREE.Vector3();
+const randomUnit = () => norm([rand(-1, 1), rand(-1, 1), rand(-1, 1)]);
+const _v = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const _m = new THREE.Matrix4();
+const _s = new THREE.Vector3();
+const _c = new THREE.Color();
 const _up = new THREE.Vector3(0, 1, 0);
+const _fwdZ = new THREE.Vector3(0, 0, 1);
 
-// Host simulates enemies, asteroids, damage and score. The pilot (host or guest) owns the
-// ship's sideways position so steering has no lag. Each shooter detects hits on what they
-// see and reports them (co-op, so we trust the shooter).
+// The cockpit stays put around the players; the whole universe (`space`) is moved and rotated
+// by the inverse of the ship's pose, so cockpit controls never move under the players' hands.
+//
+// Netcode: the pilot owns the ship pose (no steering lag). The host simulates enemies, mines,
+// damage and score. Each shooter detects their own hits and reports them (co-op, so we trust them).
+// The static layout comes from (level, seed), so only kills and moving things go over the network.
 export class Starship extends Game {
   constructor(app) {
     super(app);
@@ -31,43 +53,64 @@ export class Starship extends Game {
     this.isHost = app.role !== 'guest';
     this.solo = !app.net.connected;
     this.roles = { pilot: 'host', gunner: this.solo ? 'host' : 'guest' };
-    this.phase = 'brief'; // brief -> play -> over
-    this.ship = { x: 0, y: 0, vx: 0, vy: 0 };
-    this.shipView = { x: 0, y: 0 };
-    this.remoteShip = { x: 0, y: 0 };
-    this.st = { shield: 100, hull: 100, score: 0, wave: 0, speed: 26 };
-    this.ents = new Map(); // host simulation
-    this.views = new Map(); // id -> { type, r, mesh, spin }
-    this.breaches = new Map(); // id -> { id, spot, pos, group, ring }
+    this.phase = 'brief'; // brief -> play <-> cleared -> over
+    this.level = 1;
+    this.seed = 0;
+    this.sector = null;
+
+    this.ship = { p: new THREE.Vector3(), yaw: 0, pitch: 0, throttle: 0.45, speed: 25, vel: new THREE.Vector3() };
+    this.view = { p: new THREE.Vector3(), q: new THREE.Quaternion(), vel: new THREE.Vector3(), prev: new THREE.Vector3() };
+    this.remoteShip = { p: new THREE.Vector3(), q: new THREE.Quaternion(), v: [0, 0, 0], has: false };
+    this.st = { shield: 100, hull: 100, score: 0, level: 1, obj: -1, objHp: 1 };
+
+    this.statics = new Map(); // outposts, turrets, mines: id -> state (both players)
+    this.dyn = new Map(); // host: fighters & plasma being simulated
+    this.dynView = new Map(); // what is drawn: id -> { type, p, mesh }
+    this.staticViews = new Map(); // outpost/turret id -> mesh
+    this.mineIndex = new Map(); // mine id -> instance index
+    this.armed = new Set();
+    this.buf = new EntityBuffer();
+    this.shipBuf = new SnapshotBuffer({ stride: 7, quatOffset: 3 });
+    this.clock = new ClockSync();
+
+    this.breaches = new Map();
     this.repair = new Map();
     this.repairedIds = new Set();
-    this.buf = new EntityBuffer();
-    this.shipBuf = new SnapshotBuffer({ stride: 2, quatOffset: -1 });
-    this.clock = new ClockSync();
     this.cool = [0, 0];
+    this.noseCool = 0;
+    this.noseSide = 0;
     this.lastDamage = -99;
-    this.nextId = 1;
+    this.bumpCool = 0;
+    this.nextDyn = 10000;
     this.nextBreach = 1;
-    this.wave = null;
+    this.stick = { hand: -1, x: 0, y: 0 };
+    this.lever = { hand: -1 };
     this.sendAcc = 0;
     this.shipAcc = 0;
     this.hudAcc = 0;
     this.sparkAcc = 0;
+    this.edgeWarn = 0;
+    this.clearT = 0;
     this.hurt = 0;
-    this.stick = { hand: -1, x: 0, y: 0 };
     this.best = Number(localStorage.getItem(BEST_KEY) || 0);
 
+    this.sky = new THREE.Group();
     this.space = new THREE.Group();
-    this.root.add(this.space);
-    this.fx = new Particles(this.space, { max: 700, size: 0.45 });
+    this.root.add(this.sky, this.space);
+    this.fx = new Particles(this.space, { max: 900, size: 1.2 });
     this.bolts = [];
+    app.camera.far = 5000;
+    app.camera.updateProjectionMatrix();
 
     this.makeAssets();
-    this.buildSpace();
+    this.buildSky();
     this.buildCockpit();
     this.buildControls();
     this.buildGuns();
+    this.buildMap();
     this.buildHud();
+    this.buildMarker();
+    this.buildDust();
     this.placeRig();
     this.refreshPanel();
     if (!this.isHost) app.sendGame('join');
@@ -75,86 +118,107 @@ export class Starship extends Game {
 
   get isPilot() { return this.roles.pilot === this.mySide; }
   get isGunner() { return this.roles.gunner === this.mySide; }
+  get cfg() { return this.sector.cfg; }
 
   // ---------- setup ----------
 
   makeAssets() {
-    this.astGeo = new THREE.IcosahedronGeometry(1, 0);
-    this.astMat = new THREE.MeshLambertMaterial({ color: 0x8a7a6a, flatShading: true });
-    this.plasmaGeo = new THREE.SphereGeometry(0.35, 10, 8);
-    this.plasmaMat = glowMat(0xff3355);
-    this.boltGeo = new THREE.CylinderGeometry(0.03, 0.03, 2.5, 6);
-    this.enemyParts = {
-      body: new THREE.ConeGeometry(0.7, 2.4, 6),
-      wing: new THREE.BoxGeometry(3.2, 0.1, 0.8),
-      eye: new THREE.SphereGeometry(0.3, 10, 8),
+    this.mats = {
+      hull: new THREE.MeshLambertMaterial({ color: 0x3a3550, flatShading: true }),
       dark: new THREE.MeshLambertMaterial({ color: 0x2a2030, flatShading: true }),
-      glow: glowMat(0xff2244),
+      red: glowMat(0xff2244),
+      plasma: glowMat(0xff3355),
+      halo: new THREE.MeshBasicMaterial({ color: 0xff3355, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }),
     };
+    this.geos = {
+      core: new THREE.SphereGeometry(10, 20, 14),
+      ring: new THREE.TorusGeometry(16, 1.2, 8, 40),
+      spike: new THREE.CylinderGeometry(0.8, 0.8, 34, 6),
+      beacon: new THREE.SphereGeometry(3, 12, 8),
+      turret: new THREE.BoxGeometry(2.6, 2.6, 2.6),
+      barrel: new THREE.CylinderGeometry(0.4, 0.4, 3, 8),
+      fBody: new THREE.ConeGeometry(0.9, 3.2, 6),
+      fWing: new THREE.BoxGeometry(4.2, 0.15, 1.1),
+      fEye: new THREE.SphereGeometry(0.4, 10, 8),
+      plasma: new THREE.SphereGeometry(0.6, 10, 8),
+      plasmaHalo: new THREE.SphereGeometry(1.3, 10, 8),
+      bolt: new THREE.CylinderGeometry(0.06, 0.06, 5, 6),
+    };
+
+    this.mines = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1.6, 0), new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_MINES);
+    this.mines.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.mines.frustumCulled = false;
+    for (let i = 0; i < MAX_MINES; i++) this.mines.setColorAt(i, _c.set(0xff8800));
+    this.mines.count = 0; // no sector loaded yet
+    this.space.add(this.mines);
+
+    this.rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: 0x8a7a6a, flatShading: true }), MAX_ASTEROIDS);
+    this.rocks.count = 0;
+    this.rocks.frustumCulled = false;
+    this.space.add(this.rocks);
   }
 
-  makeView(id, type, r) {
-    let mesh;
-    if (type === ET.asteroid) {
-      mesh = new THREE.Mesh(this.astGeo, this.astMat);
-      const k = 1 + (id % 7) * 0.05;
-      mesh.scale.set(r * k, r, r * (2 - k));
-    } else if (type === ET.enemy) {
-      mesh = new THREE.Group();
-      const body = new THREE.Mesh(this.enemyParts.body, this.enemyParts.dark);
-      body.rotation.x = Math.PI / 2; // nose toward +z (the ship)
-      const wing = new THREE.Mesh(this.enemyParts.wing, this.enemyParts.dark);
-      const eye = new THREE.Mesh(this.enemyParts.eye, this.enemyParts.glow);
-      eye.position.z = 0.9;
-      const trim = edges(this.enemyParts.wing, 0xff2244);
-      mesh.add(body, wing, eye, trim);
-    } else {
-      mesh = new THREE.Mesh(this.plasmaGeo, this.plasmaMat);
+  makeOutpost() {
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(this.geos.core, this.mats.hull));
+    const ring = new THREE.Mesh(this.geos.ring, this.mats.red);
+    ring.rotation.x = Math.PI / 2;
+    g.add(ring);
+    for (const rz of [0, Math.PI / 2]) {
+      const sp = new THREE.Mesh(this.geos.spike, this.mats.dark);
+      sp.rotation.z = rz;
+      g.add(sp);
     }
-    this.space.add(mesh);
-    const v = { type, r, mesh, spin: 0.3 + (id % 5) * 0.2 };
-    this.views.set(id, v);
-    return v;
+    const beacon = new THREE.Mesh(this.geos.beacon, this.mats.halo);
+    beacon.position.y = 14;
+    g.add(beacon);
+    g.userData.beacon = beacon;
+    return g;
   }
 
-  removeView(id) {
-    const v = this.views.get(id);
-    if (!v) return;
-    this.space.remove(v.mesh);
-    this.views.delete(id);
+  makeTurret() {
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(this.geos.turret, this.mats.dark));
+    const barrel = new THREE.Mesh(this.geos.barrel, this.mats.red);
+    barrel.position.y = 2;
+    g.add(barrel);
+    return g;
   }
 
-  buildSpace() {
+  makeFighter() {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(this.geos.fBody, this.mats.dark);
+    body.rotation.x = Math.PI / 2; // nose toward +z (we orient +z along the flight direction)
+    const wing = new THREE.Mesh(this.geos.fWing, this.mats.dark);
+    const eye = new THREE.Mesh(this.geos.fEye, this.mats.red);
+    eye.position.z = 1.2;
+    g.add(body, wing, eye, edges(this.geos.fWing, 0xff2244));
+    return g;
+  }
+
+  makePlasma() {
+    const g = new THREE.Mesh(this.geos.plasma, this.mats.plasma);
+    g.add(new THREE.Mesh(this.geos.plasmaHalo, this.mats.halo));
+    return g;
+  }
+
+  buildSky() {
     const app = this.app;
     app.scene.background = new THREE.Color(0x020310);
-    this.root.add(new THREE.HemisphereLight(0xaab8ff, 0x221a33, 1.0));
-    const sun = new THREE.DirectionalLight(0xfff0dd, 1.6);
+    this.root.add(new THREE.HemisphereLight(0xaab8ff, 0x221a33, 0.9));
+    const sun = new THREE.DirectionalLight(0xfff0dd, 1.7);
     sun.position.set(-4, 6, 3);
-    this.root.add(sun);
-
-    const planet = new THREE.Mesh(new THREE.SphereGeometry(70, 32, 24), new THREE.MeshLambertMaterial({ color: 0x4b2f9a }));
-    planet.position.set(-170, -50, -520);
-    this.root.add(planet);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(90, 120, 64), new THREE.MeshBasicMaterial({
+    this.sky.add(sun);
+    this.sky.add(starfield(2000, 2500, 3500));
+    const planet = new THREE.Mesh(new THREE.SphereGeometry(450, 32, 24), new THREE.MeshLambertMaterial({ color: 0x4b2f9a }));
+    planet.position.set(-1500, -700, -3000);
+    this.sky.add(planet);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(580, 780, 64), new THREE.MeshBasicMaterial({
       color: 0x8f7fff, side: THREE.DoubleSide, transparent: true, opacity: 0.35,
     }));
     ring.position.copy(planet.position);
     ring.rotation.set(1.2, 0.3, 0);
-    this.root.add(ring);
-
-    this.star = new Float32Array(STARS * 3);
-    for (let i = 0; i < STARS; i++) {
-      this.star[i * 3] = rand(-70, 70);
-      this.star[i * 3 + 1] = rand(-45, 45);
-      this.star[i * 3 + 2] = rand(-300, 20);
-    }
-    this.streakPos = new Float32Array(STARS * 6);
-    const g = new THREE.BufferGeometry();
-    this.streakAttr = new THREE.BufferAttribute(this.streakPos, 3);
-    g.setAttribute('position', this.streakAttr);
-    this.streaks = new THREE.LineSegments(g, lineMat(0xbfd0ff, 0.7));
-    this.streaks.frustumCulled = false;
-    this.space.add(this.streaks);
+    this.sky.add(ring);
   }
 
   buildCockpit() {
@@ -172,7 +236,6 @@ export class Starship extends Game {
         t.rotation.copy(m.rotation);
         root.add(t);
       }
-      return m;
     };
     box(3.4, 0.06, 3.0, 0, -0.03, 0.25);
     box(3.4, 0.86, 0.1, 0, 0.43, -1.05, 0, 0x22e6ff);
@@ -198,7 +261,6 @@ export class Starship extends Game {
       root.add(tag.mesh);
     }
 
-    // Where breaches can appear: dim panels on the walls.
     for (const s of BREACH_SPOTS) {
       const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.34), new THREE.MeshBasicMaterial({ color: 0x2a3350 }));
       panel.position.set(...s);
@@ -206,7 +268,6 @@ export class Starship extends Game {
       root.add(panel);
     }
 
-    // Red flash when the ship takes hull damage.
     this.hurtMesh = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 12), new THREE.MeshBasicMaterial({
       color: 0xff0022, transparent: true, opacity: 0, side: THREE.BackSide, depthTest: false,
     }));
@@ -223,11 +284,26 @@ export class Starship extends Game {
     this.pivot.position.copy(STICK_BASE);
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.015, STICK_LEN, 8), metal);
     shaft.position.y = STICK_LEN / 2;
-    this.knob = new THREE.Mesh(new THREE.SphereGeometry(0.035, 16, 12), glowMat(0x7dff8a));
-    this.knob.position.y = STICK_LEN;
-    this.pivot.add(shaft, this.knob);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.035, 16, 12), glowMat(0x7dff8a));
+    knob.position.y = STICK_LEN;
+    this.pivot.add(shaft, knob);
     this.root.add(this.pivot);
     this.knobRest = STICK_BASE.clone().add(new THREE.Vector3(0, STICK_LEN, 0));
+
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.02, THROTTLE_TRAVEL + 0.06), metal);
+    rail.position.copy(THROTTLE_BASE);
+    this.root.add(rail);
+    this.leverHandle = new THREE.Group();
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.1, 8), metal);
+    post.position.y = 0.05;
+    const grip = new THREE.Mesh(new THREE.SphereGeometry(0.033, 16, 12), glowMat(0xffb347));
+    grip.position.y = 0.1;
+    this.leverHandle.add(post, grip);
+    this.root.add(this.leverHandle);
+    const tag = new Label('THROTTLE', { w: 0.2, h: 0.04, color: '#ffb347' });
+    tag.mesh.position.set(THROTTLE_BASE.x, THROTTLE_BASE.y + 0.02, THROTTLE_BASE.z + 0.18);
+    tag.mesh.rotation.x = -Math.PI / 2;
+    this.root.add(tag.mesh);
   }
 
   buildGuns() {
@@ -239,7 +315,7 @@ export class Starship extends Game {
       barrel.rotation.x = Math.PI / 2;
       barrel.position.z = -0.03;
       const aim = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, -0.1), new THREE.Vector3(0, 0, -30)]),
+        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, -0.1), new THREE.Vector3(0, 0, -40)]),
         lineMat(this.app.myColor, 0.25),
       );
       g.add(body, barrel, aim);
@@ -248,9 +324,59 @@ export class Starship extends Game {
     });
   }
 
+  buildMap() {
+    const g = (this.map = new THREE.Group());
+    g.position.copy(MAP_CENTER);
+    this.root.add(g);
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(MAP_R, 48), new THREE.MeshBasicMaterial({
+      color: 0x22e6ff, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false,
+    }));
+    disc.rotation.x = -Math.PI / 2;
+    g.add(disc);
+    for (const f of [1 / 3, 2 / 3, 1]) {
+      const pts = [];
+      for (let i = 0; i <= 48; i++) {
+        const a = (i / 48) * Math.PI * 2;
+        pts.push(new THREE.Vector3(Math.cos(a) * MAP_R * f, 0, Math.sin(a) * MAP_R * f));
+      }
+      g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat(0x22e6ff, f === 1 ? 0.8 : 0.3)));
+    }
+    const me = new THREE.Mesh(new THREE.ConeGeometry(0.012, 0.035, 8), glowMat(0x7dff8a));
+    me.rotation.x = -Math.PI / 2;
+    g.add(me);
+    const range = new Label(`${MAP_RANGE} m`, { w: 0.12, h: 0.03, color: '#22e6ff' });
+    range.mesh.position.set(MAP_R * 0.75, 0.005, MAP_R * 0.75);
+    range.mesh.rotation.x = -Math.PI / 2;
+    g.add(range.mesh);
+
+    this.mapIcons = { outposts: [], fighters: [] };
+    this.mapOutGeo = new THREE.OctahedronGeometry(0.014, 0);
+    this.mapOutMat = glowMat(0xff4466);
+    this.mapObjMat = glowMat(0xffee33);
+    this.mapFighterGeo = new THREE.ConeGeometry(0.006, 0.018, 5);
+    this.mapFighterMat = glowMat(0xff2244);
+    this.mapMinePos = new Float32Array(MAP_MINES * 3);
+    const mg = new THREE.BufferGeometry();
+    this.mapMineAttr = new THREE.BufferAttribute(this.mapMinePos, 3);
+    mg.setAttribute('position', this.mapMineAttr);
+    this.mapMines = new THREE.Points(mg, new THREE.PointsMaterial({ color: 0xff8800, size: 0.006 }));
+    this.mapMines.frustumCulled = false;
+    g.add(this.mapMines);
+
+    // 3D arrow above the map pointing at the current target.
+    this.arrow = new THREE.Group();
+    this.arrow.position.set(0, 0.17, 0);
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.07, 8), glowMat(0xffee33));
+    shaft.position.y = -0.02;
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.05, 12), glowMat(0xffee33));
+    tip.position.y = 0.035;
+    this.arrow.add(shaft, tip);
+    g.add(this.arrow);
+  }
+
   buildHud() {
     const screen = (x, w) => {
-      const l = new Label('', { w, h: 0.2, res: 512, size: 0.7, bg: 'rgba(0,20,30,0.85)', color: '#7dffef' });
+      const l = new Label('', { w, h: 0.2, res: 512, size: 0.75, bg: 'rgba(0,20,30,0.85)', color: '#7dffef' });
       l.mesh.position.set(x, 1.04, -0.93);
       l.mesh.rotation.x = -0.3;
       this.root.add(l.mesh);
@@ -259,9 +385,35 @@ export class Starship extends Game {
     this.hudCenter = screen(0, 0.62);
     this.hudLeft = screen(-0.95, 0.5);
     this.hudRight = screen(0.95, 0.5);
-    this.panel = this.app.ui.add(new Panel({ w: 1.3, h: 0.95, accent: '#7dff8a' }));
-    this.panel.mesh.position.set(0, 1.6, -0.95);
+    this.panel = this.app.ui.add(new Panel({ w: 1.4, h: 1.05, accent: '#7dff8a' }));
+    this.panel.mesh.position.set(0, 1.62, -0.95);
     this.root.add(this.panel.mesh);
+  }
+
+  buildMarker() {
+    this.marker = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 40), new THREE.MeshBasicMaterial({
+      color: 0xffee33, transparent: true, opacity: 0.9, depthTest: false, side: THREE.DoubleSide,
+    }));
+    this.marker.renderOrder = 997;
+    this.marker.visible = false;
+    this.space.add(this.marker);
+    this.markerLabel = new Label('', { w: 2, h: 0.4, color: '#ffee33', size: 0.7 });
+    this.markerLabel.mesh.material.depthTest = false;
+    this.markerLabel.mesh.renderOrder = 997;
+    this.markerLabel.mesh.visible = false;
+    this.space.add(this.markerLabel.mesh);
+  }
+
+  buildDust() {
+    this.dustBase = new Float32Array(DUST * 3);
+    for (let i = 0; i < DUST * 3; i++) this.dustBase[i] = rand(0, DUST_BOX);
+    this.dustPos = new Float32Array(DUST * 6);
+    const g = new THREE.BufferGeometry();
+    this.dustAttr = new THREE.BufferAttribute(this.dustPos, 3);
+    g.setAttribute('position', this.dustAttr);
+    this.dust = new THREE.LineSegments(g, lineMat(0xbfd0ff, 0.6));
+    this.dust.frustumCulled = false;
+    this.space.add(this.dust);
   }
 
   placeRig() {
@@ -277,9 +429,9 @@ export class Starship extends Game {
         accent: '#7dff8a',
         cols: 2,
         lines: [
-          `You are the ${you}.`,
-          'Pilot: grab the joystick (or use the left thumbstick) to dodge.',
-          'Gunner: aim with your hands, pull the triggers to shoot.',
+          `You are the ${you}. Mission: find and destroy every enemy outpost. The map in front of you shows targets (yellow), outposts, fighters and mines.`,
+          'Pilot: joystick or left thumbstick steers all around; throttle lever or right thumbstick sets speed; joystick trigger fires the nose guns.',
+          'Gunner: aim with your hands and pull the triggers. Shoot mines before you fly into them!',
           'Everyone: hold the grip on sparking panels to fix breaches.',
         ],
         buttons: [
@@ -293,7 +445,7 @@ export class Starship extends Game {
         title: 'SHIP DESTROYED',
         accent: '#ff6b6b',
         cols: 2,
-        lines: [`You reached wave ${this.st.wave} with ${this.st.score} points.`, `Best: ${Math.max(this.best, this.st.score)}`],
+        lines: [`You reached level ${this.st.level} with ${this.st.score} points.`, `Best: ${Math.max(this.best, this.st.score)}`],
         buttons: [
           { label: 'Fly again', onClick: () => this.app.requestGame('starship') },
           { label: 'Menu', onClick: () => this.app.requestGame('lobby') },
@@ -317,132 +469,239 @@ export class Starship extends Game {
     this.refreshPanel();
   }
 
+  // ---------- sector ----------
+
+  loadSector(level, seed) {
+    for (const id of [...this.dynView.keys()]) this.removeDynView(id);
+    for (const mesh of this.staticViews.values()) this.space.remove(mesh);
+    this.staticViews.clear();
+    this.statics.clear();
+    this.mineIndex.clear();
+    this.dyn.clear();
+    this.armed.clear();
+    this.buf.clear();
+    this.level = level;
+    this.seed = seed;
+    this.sector = generateSector(level, seed);
+    const s = this.sector;
+    for (const o of [...s.outposts, ...s.turrets]) {
+      this.statics.set(o.id, { ...o, p: o.p.slice(), alive: true });
+      const mesh = o.type === ET.outpost ? this.makeOutpost() : this.makeTurret();
+      mesh.position.set(...o.p);
+      this.space.add(mesh);
+      this.staticViews.set(o.id, mesh);
+    }
+    s.mines.slice(0, MAX_MINES).forEach((m, i) => {
+      this.statics.set(m.id, { ...m, p: m.p.slice(), alive: true, fuse: null });
+      this.mineIndex.set(m.id, i);
+    });
+    this.rocks.count = Math.min(s.asteroids.length, MAX_ASTEROIDS);
+    for (let i = 0; i < this.rocks.count; i++) {
+      const a = s.asteroids[i];
+      _q.setFromEuler(new THREE.Euler(i, i * 2.3, i * 0.7));
+      this.rocks.setMatrixAt(i, _m.compose(_v.set(...a.p), _q, _s.set(a.r, a.r * 0.8, a.r * 1.1)));
+    }
+    this.rocks.instanceMatrix.needsUpdate = true;
+    this.st.level = level;
+    this.st.obj = s.outposts[0].id;
+    this.st.objHp = 1;
+    if (this.isPilot) {
+      this.ship.p.set(0, 0, 0);
+      this.ship.yaw = 0;
+      this.ship.pitch = 0;
+      this.ship.throttle = 0.45;
+    }
+  }
+
+  outpostsLeft() {
+    let n = 0;
+    for (const e of this.statics.values()) if (e.type === ET.outpost && e.alive) n++;
+    return n;
+  }
+
   // ---------- host simulation ----------
 
   startRun() {
     if (this.phase === 'play') return;
-    for (const id of [...this.views.keys()]) this.removeView(id);
     for (const id of [...this.breaches.keys()]) this.removeBreach(id);
-    this.ents.clear();
-    this.st = { shield: 100, hull: 100, score: 0, wave: 0, speed: 26 };
+    this.st = { shield: 100, hull: 100, score: 0, level: 1, obj: -1, objHp: 1 };
+    this.seed = Math.floor(Math.random() * 1e9);
+    this.loadSector(1, this.seed);
+    this.spawnInitialFighters();
     this.phase = 'play';
-    this.startWave(1);
-    this.app.sendGame('start', { roles: this.roles });
+    this.app.sendGame('start', { roles: this.roles, level: 1, seed: this.seed });
     this.onStart();
+    this.announce(`LEVEL 1: destroy ${this.cfg.outposts} enemy outposts.\nFollow the yellow arrow!`);
   }
 
   onStart() {
-    this.ship = { x: 0, y: 0, vx: 0, vy: 0 };
     this.refreshPanel();
     this.app.sfx.powerup();
   }
 
-  startWave(n) {
-    const cfg = waveConfig(n);
-    this.wave = { n, t: 0, a: 0, e: 0, state: 'active', brk: 0, cfg };
-    this.st.wave = n;
-    this.st.speed = cfg.speed;
-    this.announce(n === 1 ? 'Wave 1: here they come!' : `Wave ${n}`);
+  spawnInitialFighters() {
+    const outs = this.sector.outposts;
+    for (let i = 0; i < this.cfg.fighters; i++) this.spawnFighter(outs[i % outs.length].p);
   }
 
-  announce(text) {
-    this.app.toast(text, 3);
-    this.app.sendGame('msg', { text });
-  }
-
-  spawnAsteroid() {
-    const r = rand(0.8, 2.6);
-    const aimed = Math.random() < 0.3;
-    const s = this.shipView;
-    const p = [s.x + (aimed ? rand(-2, 2) : rand(-18, 18)), s.y + (aimed ? rand(-1.5, 1.5) : rand(-10, 10)), SPAWN_Z];
-    this.ents.set(this.nextId, {
-      id: this.nextId++, type: ET.asteroid, p, v: [rand(-1, 1), rand(-0.6, 0.6), rand(-2, 4)], r, hp: asteroidHp(r), t: 0,
+  spawnFighter(home) {
+    const id = this.nextDyn++;
+    this.dyn.set(id, {
+      id, type: ET.fighter, p: add(home, scale(randomUnit(), 40)), dir: randomUnit(), hp: this.cfg.fighterHp,
+      state: 'patrol', home: home.slice(), ph: rand(0, 6), fireT: rand(0.5, 2) * this.cfg.fireEvery, breakT: 0, breakDir: null, t: 0,
     });
   }
 
-  spawnEnemy() {
-    const s = this.shipView;
-    this.ents.set(this.nextId, {
-      id: this.nextId++, type: ET.enemy, p: [s.x + rand(-20, 20), s.y + rand(-6, 8), SPAWN_Z], v: [0, 0, 0], r: 1.4, hp: 3, t: 0,
-      state: 'in', ox: rand(-8, 8), oy: rand(-3, 4), ph: rand(0, 6), fire: this.wave.cfg.enemyFire * rand(0.5, 1.2), ft: 0,
-    });
+  firePlasma(from, ship, shipVel, accuracyScale = 1) {
+    const cfg = this.cfg;
+    const aim = add(leadTarget(from, ship, shipVel, cfg.plasmaSpeed), scale(randomUnit(), cfg.spread * accuracyScale * Math.random()));
+    const id = this.nextDyn++;
+    this.dyn.set(id, { id, type: ET.plasma, p: from.slice(), v: scale(norm(sub(aim, from)), cfg.plasmaSpeed), hp: 1, t: 0 });
+    if (dist(from, ship) < 250) this.app.sfx.laser(this.toCockpit(from));
   }
 
-  spawnPlasma(from, ship) {
-    const d = [ship[0] - from[0], ship[1] - from[1], -from[2]];
-    const l = Math.hypot(...d) || 1;
-    this.ents.set(this.nextId, {
-      id: this.nextId++, type: ET.plasma, p: from.slice(), v: d.map((c) => (c / l) * PLASMA_SPEED), r: 0.35, hp: 1, t: 0,
-    });
-  }
-
-  enemyAI(e, dt, ship) {
-    if (e.state === 'in') {
-      e.p[2] += 45 * dt;
-      if (e.p[2] >= ENGAGE_Z) e.state = 'fight';
-    } else if (e.state === 'fight') {
-      e.ft += dt;
-      const target = [
-        ship[0] + e.ox + Math.sin(e.t * 0.7 + e.ph) * 6,
-        ship[1] + e.oy + Math.cos(e.t * 0.9 + e.ph) * 3,
-        ENGAGE_Z + Math.sin(e.t * 0.5 + e.ph) * 6,
-      ];
-      const max = 9 * dt;
-      for (let k = 0; k < 3; k++) e.p[k] += THREE.MathUtils.clamp(target[k] - e.p[k], -max, max);
-      e.fire -= dt;
-      if (e.fire <= 0) {
-        e.fire = this.wave.cfg.enemyFire * rand(0.7, 1.3);
-        this.spawnPlasma(e.p, ship);
-      }
-      if (e.ft > 18) e.state = 'out';
+  fighterAI(f, dt, ship, shipVel) {
+    const cfg = this.cfg;
+    f.t += dt;
+    const toShip = sub(ship, f.p);
+    const d = Math.hypot(...toShip);
+    let desired;
+    if (f.state === 'patrol') {
+      const orbit = [f.home[0] + Math.cos(f.t * 0.3 + f.ph) * 90, f.home[1] + Math.sin(f.t * 0.2) * 30, f.home[2] + Math.sin(f.t * 0.3 + f.ph) * 90];
+      desired = sub(orbit, f.p);
+      if (d < 480) f.state = 'attack';
     } else {
-      e.p[2] -= 50 * dt;
-      e.p[1] += 6 * dt;
+      if (f.breakT > 0) {
+        f.breakT -= dt;
+        desired = f.breakDir;
+      } else {
+        desired = sub(leadTarget(f.p, ship, shipVel, cfg.fighterSpeed), f.p);
+        if (d < 60) {
+          f.breakT = 2.2;
+          f.breakDir = norm(add(randomUnit(), scale(norm(toShip), -0.5)));
+        }
+      }
+      if (d > 950) f.state = 'patrol';
+      f.fireT -= dt;
+      if (f.fireT <= 0 && d < 380 && dot(f.dir, norm(toShip)) > 0.9) {
+        f.fireT = cfg.fireEvery * rand(0.8, 1.2);
+        this.firePlasma(f.p, ship, shipVel);
+      }
     }
+    const want = norm(desired);
+    const k = Math.min(1, 1.8 * dt);
+    f.dir = norm(add(scale(f.dir, 1 - k), scale(want, k)));
+    f.p = add(f.p, scale(f.dir, cfg.fighterSpeed * dt));
   }
 
   hostSim(dt) {
-    const w = this.wave;
-    const cfg = w.cfg;
-    if (w.state === 'active') {
-      w.t += dt;
-      while (w.a < cfg.asteroids && w.t >= (w.a * cfg.duration) / cfg.asteroids) { this.spawnAsteroid(); w.a++; }
-      while (w.e < cfg.enemies && w.t >= 5 + (w.e * cfg.duration * 0.75) / cfg.enemies) { this.spawnEnemy(); w.e++; }
-      const enemiesAlive = [...this.ents.values()].some((e) => e.type === ET.enemy);
-      if (w.a >= cfg.asteroids && w.e >= cfg.enemies && !enemiesAlive && w.t > cfg.duration) {
-        w.state = 'break';
-        w.brk = 5;
-        this.st.score += 250;
-        this.announce(`Wave ${w.n} cleared! +250`);
+    const cfg = this.cfg;
+    const ship = this.view.p.toArray();
+    const shipVel = this.isPilot ? this.ship.vel.toArray() : this.remoteShip.v;
+    let fighters = 0;
+    for (const e of this.dyn.values()) if (e.type === ET.fighter) fighters++;
+
+    for (const e of this.statics.values()) {
+      if (!e.alive) continue;
+      if (e.type === ET.outpost) {
+        e.spawnT = (e.spawnT ?? cfg.spawnEvery * Math.random()) - dt;
+        if (e.spawnT <= 0) {
+          e.spawnT = cfg.spawnEvery;
+          if (fighters < cfg.fighterCap) { this.spawnFighter(e.p); fighters++; }
+        }
+      } else if (e.type === ET.turret) {
+        if (dist(e.p, ship) < 420) {
+          e.fireT = (e.fireT ?? rand(0, 2)) - dt;
+          if (e.fireT <= 0) {
+            e.fireT = cfg.fireEvery * 1.4 * rand(0.8, 1.2);
+            this.firePlasma(e.p, ship, shipVel, 1.3);
+          }
+        }
+      } else if (e.type === ET.mine) {
+        const d = dist(e.p, ship);
+        if (e.seeker && e.fuse === null && d < SEEKER_RANGE) {
+          e.p = add(e.p, scale(norm(sub(ship, e.p)), SEEKER_SPEED * dt));
+          e.moving = true;
+        }
+        if (e.fuse === null && d < MINE_TRIGGER_R) {
+          e.fuse = MINE_FUSE;
+          this.armed.add(e.id);
+          this.app.sfx.alarm();
+        }
+        if (e.fuse !== null) {
+          e.fuse -= dt;
+          if (e.fuse <= 0) {
+            if (d < MINE_BLAST_R) this.damage(DAMAGE.mine);
+            this.killStatic(e, false);
+          }
+        }
       }
-    } else {
-      w.brk -= dt;
-      if (w.brk <= 0) this.startWave(w.n + 1);
     }
 
-    const V = this.st.speed;
-    const ship = [this.shipView.x, this.shipView.y];
-    for (const e of [...this.ents.values()]) {
-      e.t += dt;
-      if (e.type === ET.asteroid) {
-        e.p[0] += e.v[0] * dt;
-        e.p[1] += e.v[1] * dt;
-        e.p[2] += (V + e.v[2]) * dt;
-      } else if (e.type === ET.enemy) this.enemyAI(e, dt, ship);
-      else for (let k = 0; k < 3; k++) e.p[k] += e.v[k] * dt;
-      if (e.p[2] > 25 || e.p[2] < -330 || (e.type === ET.plasma && e.t > 7)) {
-        this.ents.delete(e.id);
-        continue;
+    for (const e of [...this.dyn.values()]) {
+      if (e.type === ET.fighter) this.fighterAI(e, dt, ship, shipVel);
+      else {
+        e.t += dt;
+        e.p = add(e.p, scale(e.v, dt));
+        if (e.t > 6) this.dyn.delete(e.id);
+        else if (dist(e.p, ship) < SHIP_R + 0.8) {
+          this.dyn.delete(e.id);
+          this.damage(DAMAGE.plasma);
+        }
       }
-      if (hitsShip(e.p, e.r, ship)) {
-        this.damage(collisionDamage(e.type, e.r));
-        this.destroy(e, false);
-      }
+    }
+
+    this.bumpCool -= dt;
+    if (this.bumpCool <= 0 && this.touchingObstacle(ship)) {
+      this.bumpCool = 1;
+      this.damage(DAMAGE.bump);
     }
 
     if (this.app.time - this.lastDamage > REGEN_DELAY) this.st.shield = Math.min(100, this.st.shield + SHIELD_REGEN * dt);
     this.st.hull = Math.max(0, this.st.hull - BREACH_DRAIN * this.breaches.size * dt);
     if (this.st.hull <= 0) this.gameOver();
+
+    const obj = this.statics.get(this.st.obj);
+    if (!obj || !obj.alive) {
+      let best = null;
+      for (const e of this.statics.values()) {
+        if (e.type === ET.outpost && e.alive && (!best || dist(e.p, ship) < dist(best.p, ship))) best = e;
+      }
+      if (best) this.st.obj = best.id;
+      else if (this.phase === 'play') this.levelCleared();
+    }
+    const cur = this.statics.get(this.st.obj);
+    this.st.objHp = cur ? Math.max(0, cur.hp / this.cfg.coreHp) : 0;
+  }
+
+  touchingObstacle(ship) {
+    for (const a of this.sector.asteroids) if (dist(a.p, ship) < a.r + SHIP_R) return a;
+    for (const e of this.statics.values()) {
+      if (e.type === ET.outpost && e.alive && dist(e.p, ship) < BODY_R.outpost + SHIP_R) return e;
+    }
+    return null;
+  }
+
+  levelCleared() {
+    this.phase = 'cleared';
+    this.clearT = 6;
+    this.st.score += 1000;
+    this.announce(`SECTOR CLEARED! +1000\nWarping to level ${this.level + 1}…`);
+    this.app.sendGame('phase', { phase: 'cleared' });
+    this.app.sfx.powerup();
+  }
+
+  nextLevel() {
+    const level = this.level + 1;
+    this.seed = Math.floor(Math.random() * 1e9);
+    for (const id of [...this.breaches.keys()]) this.removeBreach(id);
+    this.loadSector(level, this.seed);
+    this.st.hull = Math.min(100, this.st.hull + 30);
+    this.st.shield = 100;
+    this.spawnInitialFighters();
+    this.phase = 'play';
+    this.app.sendGame('level', { level, seed: this.seed });
+    this.announce(`LEVEL ${level}: destroy ${this.cfg.outposts} outposts`);
   }
 
   damage(dmg) {
@@ -450,7 +709,7 @@ export class Starship extends Game {
     this.lastDamage = this.app.time;
     this.onHurt(toHull > 0);
     if (!this.solo) this.app.sendGame('hurt', { hull: toHull > 0 });
-    if (toHull > 0 && this.breaches.size < MAX_BREACHES && Math.random() < 0.5) this.addBreach();
+    if (toHull > 0 && this.breaches.size < MAX_BREACHES && Math.random() < 0.45) this.addBreach();
   }
 
   onHurt(hull) {
@@ -459,12 +718,86 @@ export class Starship extends Game {
     for (const h of this.app.hands) h.pulse(hull ? 1 : 0.5, 120);
   }
 
+  killStatic(e, byPlayer) {
+    if (!e.alive) return;
+    e.alive = false;
+    this.armed.delete(e.id);
+    if (byPlayer) this.st.score += SCORE[e.type];
+    const big = e.type === ET.outpost;
+    this.onKillStatic(e.id, big);
+    if (!this.solo) this.app.sendGame('kill', { id: e.id, big, p: e.p.map(r2) });
+    if (e.type === ET.outpost) {
+      for (const t of this.statics.values()) if (t.type === ET.turret && t.owner === e.id) this.killStatic(t, false);
+      const left = this.outpostsLeft();
+      if (left) this.announce(`Outpost destroyed! ${left} to go`);
+    }
+  }
+
+  onKillStatic(id, big, p = null) {
+    const e = this.statics.get(id);
+    if (e) {
+      e.alive = false;
+      if (p) e.p = p;
+    }
+    const mesh = this.staticViews.get(id);
+    if (mesh) mesh.visible = false;
+    const pos = e ? e.p : p;
+    if (pos) this.boomFx(pos, big || e?.type === ET.turret);
+  }
+
+  killDyn(e, byPlayer) {
+    this.dyn.delete(e.id);
+    if (byPlayer) this.st.score += SCORE[e.type];
+    const big = e.type === ET.fighter;
+    this.boomFx(e.p, big);
+    if (!this.solo) this.app.sendGame('boom', { p: e.p.map(r2), big });
+  }
+
+  applyHit(id, dmg) {
+    if (this.phase !== 'play') return;
+    const s = this.statics.get(id);
+    if (s && s.alive) {
+      s.hp -= dmg;
+      if (s.hp <= 0) this.killStatic(s, true);
+      return;
+    }
+    const d = this.dyn.get(id);
+    if (d) {
+      d.hp -= dmg;
+      if (d.hp <= 0) this.killDyn(d, true);
+    }
+  }
+
+  gameOver() {
+    if (this.phase === 'over') return;
+    this.phase = 'over';
+    this.app.sendGame('over', { score: this.st.score, level: this.st.level });
+    this.onOver();
+  }
+
+  onOver() {
+    for (const id of [...this.breaches.keys()]) this.removeBreach(id);
+    this.app.sfx.boom(null, true);
+    this.app.toast('The ship is lost…', 3);
+    if (this.st.score > this.best) {
+      this.best = this.st.score;
+      localStorage.setItem(BEST_KEY, String(this.best));
+    }
+    this.refreshPanel();
+  }
+
+  announce(text) {
+    this.app.toast(text, 3.5);
+    this.app.sendGame('msg', { text });
+  }
+
+  // ---------- breaches ----------
+
   addBreach() {
     const used = new Set([...this.breaches.values()].map((b) => b.spot));
     const free = BREACH_SPOTS.map((_, i) => i).filter((i) => !used.has(i));
     if (!free.length) return;
-    const spot = free[Math.floor(Math.random() * free.length)];
-    this.makeBreach(this.nextBreach++, spot);
+    this.makeBreach(this.nextBreach++, free[Math.floor(Math.random() * free.length)]);
     this.announce('HULL BREACH!\nHold the grip on the sparking panel');
     this.app.sfx.alarm();
   }
@@ -491,156 +824,6 @@ export class Starship extends Game {
     this.repair.delete(id);
   }
 
-  destroy(e, byPlayer) {
-    this.ents.delete(e.id);
-    if (byPlayer) this.st.score += scoreFor(e.type, e.r);
-    const big = e.type === ET.enemy || e.r > 2;
-    this.boomFx(e.p, big);
-    if (!this.solo) this.app.sendGame('boom', { p: e.p.map(r2), big });
-  }
-
-  applyHit(id, dmg) {
-    const e = this.ents.get(id);
-    if (!e || this.phase !== 'play') return;
-    e.hp -= dmg;
-    if (e.hp <= 0) this.destroy(e, true);
-  }
-
-  gameOver() {
-    if (this.phase === 'over') return;
-    this.phase = 'over';
-    this.app.sendGame('over', { score: this.st.score, wave: this.st.wave });
-    this.onOver();
-  }
-
-  onOver() {
-    for (const id of [...this.breaches.keys()]) this.removeBreach(id);
-    this.app.sfx.boom(null, true);
-    this.app.toast('The ship is lost…', 3);
-    if (this.st.score > this.best) {
-      this.best = this.st.score;
-      localStorage.setItem(BEST_KEY, String(this.best));
-    }
-    this.refreshPanel();
-  }
-
-  // ---------- local player ----------
-
-  updatePilot(dt) {
-    const app = this.app;
-    const s = this.stick;
-    let ix = 0, iy = 0;
-    if (this.isPilot) {
-      if (s.hand < 0) {
-        app.hands.forEach((h, i) => {
-          if (s.hand < 0 && h.connected && h.state.squeeze.down && h.pos.distanceTo(this.knobRest) < 0.14) {
-            s.hand = i;
-            h.pulse(0.4, 30);
-          }
-        });
-      }
-      if (s.hand >= 0) {
-        const h = app.hands[s.hand];
-        if (!h.connected || !h.state.squeeze.pressed) s.hand = -1;
-        else {
-          ix = THREE.MathUtils.clamp((h.pos.x - STICK_BASE.x) / 0.12, -1, 1);
-          iy = THREE.MathUtils.clamp(-(h.pos.z - STICK_BASE.z) / 0.12, -1, 1);
-        }
-      }
-      const left = app.hand('left');
-      if (left && left.axes.length() > 0.15) {
-        ix = left.axes.x;
-        iy = -left.axes.y;
-      }
-    }
-    const k = Math.min(1, dt * 12);
-    s.x += (ix - s.x) * k;
-    s.y += (iy - s.y) * k;
-    this.pivot.rotation.set(-s.y * 0.4, 0, -s.x * 0.4);
-
-    if (!this.isPilot || this.phase !== 'play') return;
-    const sh = this.ship;
-    const a = Math.min(1, dt * 4);
-    sh.vx += (ix * LAT_SPEED - sh.vx) * a;
-    sh.vy += (iy * LAT_SPEED * 0.8 - sh.vy) * a;
-    sh.x += sh.vx * dt;
-    sh.y += sh.vy * dt;
-    clampShip(sh);
-    if (!this.isHost) {
-      this.shipAcc += dt;
-      if (this.shipAcc >= 1 / 30) {
-        this.shipAcc = 0;
-        app.sendGame('ship', { x: r2(sh.x), y: r2(sh.y) }, false);
-      }
-    }
-  }
-
-  canShoot(i) {
-    if (this.phase !== 'play' || !this.app.hands[i].connected) return false;
-    return this.isGunner || (this.isPilot && this.stick.hand !== i);
-  }
-
-  updateGuns(dt) {
-    this.app.hands.forEach((hand, i) => {
-      const can = this.canShoot(i);
-      this.guns[i].visible = can;
-      hand.visual.visible = !can;
-      this.cool[i] -= dt;
-      if (can && hand.state.trigger.pressed && this.cool[i] <= 0 && !this.app.ui.captures(hand)) {
-        this.cool[i] = this.isGunner ? 0.16 : 0.35;
-        this.shoot(hand, this.isGunner ? 2 : 1);
-      }
-    });
-  }
-
-  shoot(hand, dmg) {
-    const o = hand.rayOrigin.clone();
-    o.x += this.shipView.x;
-    o.y += this.shipView.y;
-    const d = hand.dir.clone();
-    const oa = o.toArray(), da = d.toArray();
-    let best = null;
-    let bestT = 400;
-    for (const [id, v] of this.views) {
-      const t = raySphere(oa, da, v.mesh.position.toArray(), v.r + 0.5);
-      if (t >= 0 && t < bestT) { bestT = t; best = id; }
-    }
-    this.spawnBolt(o, d, bestT, this.app.myColor);
-    if (best !== null) {
-      this.fx.burst(o.clone().addScaledVector(d, bestT), 0xffffff, 10, 6, 0.3);
-      if (this.isHost) this.applyHit(best, dmg);
-      else this.app.sendGame('hit', { id: best, dmg });
-    }
-    if (!this.solo) this.app.sendGame('bolt', { o: oa.map(r2), d: da.map((c) => Math.round(c * 1000) / 1000), len: r2(bestT) });
-    this.app.sfx.laser(hand.rayOrigin);
-    hand.pulse(0.25, 20);
-  }
-
-  spawnBolt(o, d, len, color) {
-    let b = this.bolts.find((x) => !x.mesh.visible);
-    if (!b) {
-      b = { mesh: new THREE.Mesh(this.boltGeo, glowMat(color)), o: new THREE.Vector3(), d: new THREE.Vector3(), t: 0, len: 0 };
-      this.space.add(b.mesh);
-      this.bolts.push(b);
-    }
-    b.mesh.material.color.set(color);
-    b.o.copy(o);
-    b.d.copy(d);
-    b.t = 0;
-    b.len = len;
-    b.mesh.quaternion.setFromUnitVectors(_up, d);
-    b.mesh.visible = true;
-  }
-
-  updateBolts(dt) {
-    for (const b of this.bolts) {
-      if (!b.mesh.visible) continue;
-      b.t += BOLT_SPEED * dt;
-      if (b.t > b.len) { b.mesh.visible = false; continue; }
-      b.mesh.position.copy(b.o).addScaledVector(b.d, b.t + 1.25);
-    }
-  }
-
   updateRepairs(dt) {
     this.sparkAcc -= dt;
     const spark = this.sparkAcc <= 0;
@@ -662,16 +845,206 @@ export class Starship extends Game {
       if (spark) this.app.particles.burst(b.pos, 0xffaa33, 3, 1.5, 0.4, 4);
       if (prog >= REPAIR_TIME) {
         this.app.sfx.powerup();
-        if (this.isHost) {
-          this.st.score += 20;
-          this.removeBreach(id);
-        } else {
+        if (this.isHost) this.st.score += 20;
+        else {
           this.app.sendGame('repair', { id });
           this.repairedIds.add(id);
-          this.removeBreach(id);
         }
+        this.removeBreach(id);
       }
     }
+  }
+
+  syncBreaches(list) {
+    const ids = new Set(list.map(([id]) => id));
+    for (const [id, spot] of list) if (!this.breaches.has(id) && !this.repairedIds.has(id)) this.makeBreach(id, spot);
+    for (const id of [...this.breaches.keys()]) if (!ids.has(id)) this.removeBreach(id);
+    for (const id of [...this.repairedIds]) if (!ids.has(id)) this.repairedIds.delete(id);
+  }
+
+  // ---------- pilot ----------
+
+  updatePilot(dt) {
+    const app = this.app;
+    const s = this.stick;
+    const lv = this.lever;
+    let ix = 0, iy = 0;
+    if (this.isPilot) {
+      app.hands.forEach((h, i) => {
+        if (!h.connected || !h.state.squeeze.down) return;
+        if (s.hand < 0 && lv.hand !== i && h.pos.distanceTo(this.knobRest) < 0.14) { s.hand = i; h.pulse(0.4, 30); }
+        else if (lv.hand < 0 && s.hand !== i && h.pos.distanceTo(this.leverHandle.position) < 0.16) { lv.hand = i; h.pulse(0.4, 30); }
+      });
+      if (s.hand >= 0) {
+        const h = app.hands[s.hand];
+        if (!h.connected || !h.state.squeeze.pressed) s.hand = -1;
+        else {
+          ix = THREE.MathUtils.clamp((h.pos.x - STICK_BASE.x) / 0.12, -1, 1);
+          iy = THREE.MathUtils.clamp(-(h.pos.z - STICK_BASE.z) / 0.12, -1, 1);
+        }
+      }
+      if (lv.hand >= 0) {
+        const h = app.hands[lv.hand];
+        if (!h.connected || !h.state.squeeze.pressed) lv.hand = -1;
+        else this.ship.throttle = THREE.MathUtils.clamp(0.5 - (h.pos.z - THROTTLE_BASE.z) / THROTTLE_TRAVEL, 0, 1);
+      }
+      const left = app.hand('left');
+      if (left && left.axes.length() > 0.15) { ix = left.axes.x; iy = -left.axes.y; }
+      const right = app.hand('right');
+      if (right && Math.abs(right.axes.y) > 0.2) this.ship.throttle = THREE.MathUtils.clamp(this.ship.throttle - right.axes.y * dt * 0.6, 0, 1);
+    }
+    const k = Math.min(1, dt * 10);
+    s.x += (ix - s.x) * k;
+    s.y += (iy - s.y) * k;
+    this.pivot.rotation.set(-s.y * 0.4, 0, -s.x * 0.4);
+    this.leverHandle.position.set(THROTTLE_BASE.x, THROTTLE_BASE.y, THROTTLE_BASE.z - (this.ship.throttle - 0.5) * THROTTLE_TRAVEL);
+
+    if (!this.isPilot || (this.phase !== 'play' && this.phase !== 'cleared')) return;
+    const sh = this.ship;
+    sh.yaw -= s.x * YAW_RATE * dt;
+    sh.pitch = THREE.MathUtils.clamp(sh.pitch + s.y * PITCH_RATE * dt, -PITCH_MAX, PITCH_MAX);
+    const target = MIN_SPEED + sh.throttle * (MAX_SPEED - MIN_SPEED);
+    sh.speed += (target - sh.speed) * Math.min(1, dt * 1.5);
+    sh.vel.set(...forward(sh.yaw, sh.pitch)).multiplyScalar(sh.speed);
+    sh.p.addScaledVector(sh.vel, dt);
+
+    // Slide off rocks and outposts instead of flying through them (the host applies the damage).
+    const p = sh.p.toArray();
+    const solid = this.touchingObstacle(p);
+    if (solid) {
+      const r = solid.r !== undefined ? solid.r : BODY_R.outpost;
+      sh.p.set(...add(solid.p, scale(norm(sub(p, solid.p)), r + SHIP_R + 0.1)));
+    }
+    if (sh.p.length() > SECTOR_R) {
+      sh.p.setLength(SECTOR_R);
+      if (app.time - this.edgeWarn > 3) {
+        this.edgeWarn = app.time;
+        app.toast('Edge of the sector: turn back!', 2.5);
+      }
+    }
+
+    if (!this.isHost) {
+      this.shipAcc += dt;
+      if (this.shipAcc >= 1 / 30) {
+        this.shipAcc = 0;
+        const q = shipQuat(sh.yaw, sh.pitch);
+        app.sendGame('ship', { p: sh.p.toArray().map(r2), q: q.map(r4), v: sh.vel.toArray().map(r2) }, false);
+      }
+    }
+  }
+
+  updateView(dt) {
+    const v = this.view;
+    v.prev.copy(v.p);
+    if (this.isPilot) {
+      v.p.copy(this.ship.p);
+      v.q.set(...shipQuat(this.ship.yaw, this.ship.pitch));
+    } else if (this.isHost) {
+      if (this.remoteShip.has) {
+        const a = Math.min(1, dt * 15);
+        v.p.lerp(this.remoteShip.p, a);
+        v.q.slerp(this.remoteShip.q, a);
+      }
+    } else if (this.shipBuf.size) {
+      const s = this.shipBuf.sample(this.clock.remoteNow(performance.now()) - INTERP_DELAY_MS);
+      v.p.set(s[0], s[1], s[2]);
+      v.q.set(s[3], s[4], s[5], s[6]).normalize();
+    }
+    if (dt > 0) v.vel.lerp(_v.subVectors(v.p, v.prev).divideScalar(dt), 0.3);
+    // The universe moves around the cockpit.
+    this.space.quaternion.copy(v.q).invert();
+    this.space.position.copy(v.p).applyQuaternion(this.space.quaternion).negate();
+    this.sky.quaternion.copy(this.space.quaternion);
+  }
+
+  toCockpit(p) {
+    return new THREE.Vector3(p[0], p[1], p[2]).sub(this.view.p).applyQuaternion(this.space.quaternion);
+  }
+
+  // ---------- weapons ----------
+
+  canShoot(i) {
+    if (this.phase !== 'play' || !this.app.hands[i].connected) return false;
+    return this.isGunner || (this.isPilot && this.stick.hand !== i && this.lever.hand !== i);
+  }
+
+  updateGuns(dt) {
+    this.app.hands.forEach((hand, i) => {
+      const can = this.canShoot(i);
+      this.guns[i].visible = can;
+      hand.visual.visible = !can;
+      this.cool[i] -= dt;
+      if (can && hand.state.trigger.pressed && this.cool[i] <= 0 && !this.app.ui.captures(hand)) {
+        this.cool[i] = this.isGunner ? 0.15 : 0.3;
+        this.fire(hand.rayOrigin, hand.dir, this.isGunner ? 2 : 1, hand);
+      }
+    });
+    // Nose guns: the trigger of the hand holding the joystick.
+    this.noseCool -= dt;
+    const sh = this.stick.hand;
+    if (this.isPilot && this.phase === 'play' && sh >= 0 && this.app.hands[sh].state.trigger.pressed && this.noseCool <= 0) {
+      this.noseCool = 0.16;
+      this.noseSide = 1 - this.noseSide;
+      this.fire(NOSE_GUNS[this.noseSide], _v.set(0, 0, -1).clone(), 1, this.app.hands[sh]);
+    }
+  }
+
+  // origin/dir are in cockpit space.
+  fire(origin, dir, dmg, hand) {
+    const o = origin.clone().applyQuaternion(this.view.q).add(this.view.p);
+    const d = dir.clone().applyQuaternion(this.view.q).normalize();
+    const oa = o.toArray(), da = d.toArray();
+    let best = null;
+    let bestT = BOLT_RANGE;
+    for (const e of this.statics.values()) {
+      if (!e.alive || dist(e.p, oa) > BOLT_RANGE + 20) continue;
+      const t = raySphere(oa, da, e.p, HIT_R[e.type]);
+      if (t >= 0 && t < bestT) { bestT = t; best = e.id; }
+    }
+    for (const [id, v] of this.dynView) {
+      const t = raySphere(oa, da, v.p, HIT_R[v.type]);
+      if (t >= 0 && t < bestT) { bestT = t; best = id; }
+    }
+    this.spawnBolt(o, d, bestT, this.app.myColor);
+    if (best !== null) {
+      this.fx.burst(o.clone().addScaledVector(d, bestT), 0xffffff, 8, 10, 0.3);
+      if (this.isHost) this.applyHit(best, dmg);
+      else this.app.sendGame('hit', { id: best, dmg });
+    }
+    if (!this.solo) this.app.sendGame('bolt', { o: oa.map(r2), d: da.map(r4), len: r2(bestT) });
+    this.app.sfx.laser(origin);
+    hand?.pulse(0.25, 20);
+  }
+
+  spawnBolt(o, d, length, color) {
+    let b = this.bolts.find((x) => !x.mesh.visible);
+    if (!b) {
+      b = { mesh: new THREE.Mesh(this.geos.bolt, glowMat(color)), o: new THREE.Vector3(), d: new THREE.Vector3(), t: 0, len: 0 };
+      this.space.add(b.mesh);
+      this.bolts.push(b);
+    }
+    b.mesh.material.color.set(color);
+    b.o.copy(o);
+    b.d.copy(d);
+    b.t = 0;
+    b.len = length;
+    b.mesh.quaternion.setFromUnitVectors(_up, d);
+    b.mesh.visible = true;
+  }
+
+  updateBolts(dt) {
+    for (const b of this.bolts) {
+      if (!b.mesh.visible) continue;
+      b.t += BOLT_SPEED * dt;
+      if (b.t > b.len) { b.mesh.visible = false; continue; }
+      b.mesh.position.copy(b.o).addScaledVector(b.d, b.t + 2.5);
+    }
+  }
+
+  boomFx(p, big) {
+    this.fx.burst(p, big ? 0xffaa33 : 0xffddaa, big ? 120 : 35, big ? 30 : 12, big ? 1.6 : 0.8);
+    const c = this.toCockpit(p);
+    if (c.length() < 400) this.app.sfx.boom(c, big);
   }
 
   // ---------- networking ----------
@@ -679,7 +1052,7 @@ export class Starship extends Game {
   onNet(k, d) {
     switch (k) {
       case 'join':
-        if (this.isHost) this.app.sendGame('roles', { roles: this.roles, phase: this.phase });
+        if (this.isHost) this.app.sendGame('roles', { roles: this.roles });
         break;
       case 'roles':
         if (this.isHost) return;
@@ -695,25 +1068,41 @@ export class Starship extends Game {
         break;
       case 'start':
         if (this.isHost) return;
-        for (const id of [...this.views.keys()]) this.removeView(id);
         for (const id of [...this.breaches.keys()]) this.removeBreach(id);
-        this.buf.clear();
-        this.shipBuf.clear();
         this.roles = d.roles;
+        this.shipBuf.clear();
+        this.loadSector(d.level, d.seed);
         this.phase = 'play';
         this.placeRig();
         this.onStart();
         break;
+      case 'level':
+        if (this.isHost) return;
+        this.loadSector(d.level, d.seed);
+        this.phase = 'play';
+        break;
+      case 'phase':
+        if (!this.isHost) this.phase = d.phase;
+        break;
       case 'snap':
         if (this.isHost) return;
         this.clock.update(d.ts, performance.now());
-        this.buf.push(d.ts, d.e);
+        this.buf.push(d.ts, d.dyn);
         if (d.sh) this.shipBuf.push(d.ts, d.sh);
-        [this.st.shield, this.st.hull, this.st.score, this.st.wave, this.st.speed] = d.st;
+        [this.st.shield, this.st.hull, this.st.score, this.st.level, this.st.obj, this.st.objHp] = d.st;
+        this.armed = new Set(d.armed);
         this.syncBreaches(d.br);
         break;
       case 'ship':
-        if (this.isHost) this.remoteShip = d;
+        if (!this.isHost) return;
+        this.remoteShip.p.set(...d.p);
+        this.remoteShip.q.set(...d.q);
+        this.remoteShip.v = d.v;
+        if (!this.remoteShip.has) {
+          this.view.p.copy(this.remoteShip.p);
+          this.view.q.copy(this.remoteShip.q);
+        }
+        this.remoteShip.has = true;
         break;
       case 'hit':
         if (this.isHost) this.applyHit(d.id, d.dmg);
@@ -726,7 +1115,9 @@ export class Starship extends Game {
         break;
       case 'bolt':
         this.spawnBolt(new THREE.Vector3(...d.o), new THREE.Vector3(...d.d), d.len, this.app.partnerColor);
-        this.app.sfx.laser(_o.set(d.o[0] - this.shipView.x, d.o[1] - this.shipView.y, d.o[2]));
+        break;
+      case 'kill':
+        this.onKillStatic(d.id, d.big, d.p);
         break;
       case 'boom':
         this.boomFx(d.p, d.big);
@@ -735,14 +1126,14 @@ export class Starship extends Game {
         this.onHurt(d.hull);
         break;
       case 'msg':
-        this.app.toast(d.text, 3);
+        this.app.toast(d.text, 3.5);
         if (d.text.startsWith('HULL')) this.app.sfx.alarm();
         break;
       case 'over':
         if (this.isHost) return;
         this.phase = 'over';
         this.st.score = d.score;
-        this.st.wave = d.wave;
+        this.st.level = d.level;
         this.st.hull = 0;
         this.onOver();
         break;
@@ -750,64 +1141,210 @@ export class Starship extends Game {
     }
   }
 
-  syncBreaches(list) {
-    const ids = new Set(list.map(([id]) => id));
-    for (const [id, spot] of list) {
-      if (!this.breaches.has(id) && !this.repairedIds.has(id)) this.makeBreach(id, spot);
-    }
-    for (const id of [...this.breaches.keys()]) if (!ids.has(id)) this.removeBreach(id);
-    for (const id of [...this.repairedIds]) if (!ids.has(id)) this.repairedIds.delete(id);
-  }
-
   sendSnapshot(dt) {
-    if (this.solo || !this.isHost || this.phase !== 'play') return;
+    if (this.solo || !this.isHost || (this.phase !== 'play' && this.phase !== 'cleared')) return;
     this.sendAcc += dt;
     if (this.sendAcc < 1 / 20) return;
     this.sendAcc = 0;
-    const e = [];
-    for (const x of this.ents.values()) e.push([x.id, x.type, r2(x.p[0]), r2(x.p[1]), r2(x.p[2]), r2(x.r)]);
+    const dyn = [];
+    for (const e of this.dyn.values()) dyn.push([e.id, e.type, r2(e.p[0]), r2(e.p[1]), r2(e.p[2])]);
+    for (const e of this.statics.values()) if (e.moving && e.alive) dyn.push([e.id, e.type, r2(e.p[0]), r2(e.p[1]), r2(e.p[2])]);
+    const sh = this.isPilot ? [...this.ship.p.toArray().map(r2), ...shipQuat(this.ship.yaw, this.ship.pitch).map(r4)] : null;
     this.app.sendGame('snap', {
       ts: performance.now(),
-      sh: this.isPilot ? [r2(this.ship.x), r2(this.ship.y)] : null,
-      st: [Math.round(this.st.shield), Math.round(this.st.hull), this.st.score, this.st.wave, this.st.speed],
-      e,
+      sh,
+      st: [Math.round(this.st.shield), Math.round(this.st.hull), this.st.score, this.st.level, this.st.obj, r2(this.st.objHp)],
+      dyn,
+      armed: [...this.armed],
       br: [...this.breaches.values()].map((b) => [b.id, b.spot]),
     }, false);
   }
 
-  // ---------- per-frame ----------
+  // ---------- drawing ----------
 
-  boomFx(p, big) {
-    this.fx.burst(p, big ? 0xffaa33 : 0xffddaa, big ? 70 : 30, big ? 14 : 8, big ? 1.2 : 0.7);
-    this.app.sfx.boom(_o.set(p[0] - this.shipView.x, p[1] - this.shipView.y, p[2]), big);
+  removeDynView(id) {
+    const v = this.dynView.get(id);
+    if (!v) return;
+    this.space.remove(v.mesh);
+    this.dynView.delete(id);
   }
+
+  syncDynamic() {
+    let source;
+    if (this.isHost) {
+      source = new Map();
+      for (const e of this.dyn.values()) source.set(e.id, [e.type, e.p[0], e.p[1], e.p[2]]);
+    } else {
+      source = this.buf.size ? this.buf.sample(this.clock.remoteNow(performance.now()) - INTERP_DELAY_MS) : new Map();
+    }
+    for (const [id, v] of source) {
+      if (v[0] === ET.mine) {
+        const m = this.statics.get(id);
+        if (m && m.alive) m.p = [v[1], v[2], v[3]];
+        continue;
+      }
+      let view = this.dynView.get(id);
+      if (!view) {
+        const mesh = v[0] === ET.fighter ? this.makeFighter() : this.makePlasma();
+        this.space.add(mesh);
+        view = { type: v[0], p: [v[1], v[2], v[3]], mesh };
+        this.dynView.set(id, view);
+      }
+      const prev = view.p;
+      view.p = [v[1], v[2], v[3]];
+      view.mesh.position.set(...view.p);
+      if (view.type === ET.fighter) {
+        const dir = sub(view.p, prev);
+        if (Math.hypot(...dir) > 1e-3) view.mesh.quaternion.setFromUnitVectors(_fwdZ, _v.set(...norm(dir)));
+      }
+    }
+    for (const id of [...this.dynView.keys()]) if (!source.has(id)) this.removeDynView(id);
+  }
+
+  updateMines(t) {
+    const blink = Math.sin(t * 25) > 0;
+    for (const [id, i] of this.mineIndex) {
+      const m = this.statics.get(id);
+      if (!m.alive) {
+        this.mines.setMatrixAt(i, _m.makeScale(0, 0, 0));
+        continue;
+      }
+      _q.setFromEuler(new THREE.Euler(t * 0.7 + i, t * 0.5 + i * 2, 0));
+      this.mines.setMatrixAt(i, _m.compose(_v.set(...m.p), _q, _s.set(1, 1, 1)));
+      const color = this.armed.has(id) ? (blink ? 0xffffff : 0xff0000) : m.seeker ? 0xff33cc : 0xff8800;
+      this.mines.setColorAt(i, _c.set(color));
+    }
+    this.mines.count = this.mineIndex.size;
+    this.mines.instanceMatrix.needsUpdate = true;
+    if (this.mines.instanceColor) this.mines.instanceColor.needsUpdate = true;
+  }
+
+  updateMap(t) {
+    const fwd = _v.set(0, 0, -1).applyQuaternion(this.view.q);
+    const yaw = Math.atan2(-fwd.x, -fwd.z);
+    const ship = this.view.p.toArray();
+    const icons = this.mapIcons;
+    const place = (mesh, p) => {
+      const [x, z, h] = mapProject(ship, yaw, p, MAP_RANGE, MAP_R);
+      mesh.position.set(x, THREE.MathUtils.clamp(h, -0.07, 0.07), z);
+    };
+    let n = 0;
+    for (const e of this.statics.values()) {
+      if (e.type !== ET.outpost || !e.alive) continue;
+      let icon = icons.outposts[n];
+      if (!icon) {
+        icon = new THREE.Mesh(this.mapOutGeo, this.mapOutMat);
+        this.map.add(icon);
+        icons.outposts.push(icon);
+      }
+      const isObj = e.id === this.st.obj;
+      icon.material = isObj ? this.mapObjMat : this.mapOutMat;
+      icon.scale.setScalar(isObj ? 1.4 + Math.sin(t * 6) * 0.25 : 1);
+      icon.visible = true;
+      place(icon, e.p);
+      n++;
+    }
+    for (let i = n; i < icons.outposts.length; i++) icons.outposts[i].visible = false;
+
+    n = 0;
+    for (const v of this.dynView.values()) {
+      if (v.type !== ET.fighter) continue;
+      let icon = icons.fighters[n];
+      if (!icon) {
+        icon = new THREE.Mesh(this.mapFighterGeo, this.mapFighterMat);
+        this.map.add(icon);
+        icons.fighters.push(icon);
+      }
+      icon.visible = true;
+      place(icon, v.p);
+      n++;
+    }
+    for (let i = n; i < icons.fighters.length; i++) icons.fighters[i].visible = false;
+
+    n = 0;
+    for (const e of this.statics.values()) {
+      if (e.type !== ET.mine || !e.alive || n >= MAP_MINES || dist(e.p, ship) > MAP_RANGE * 0.4) continue;
+      const [x, z, h] = mapProject(ship, yaw, e.p, MAP_RANGE, MAP_R);
+      this.mapMinePos[n * 3] = x;
+      this.mapMinePos[n * 3 + 1] = THREE.MathUtils.clamp(h, -0.07, 0.07);
+      this.mapMinePos[n * 3 + 2] = z;
+      n++;
+    }
+    this.mapMines.geometry.setDrawRange(0, n);
+    this.mapMineAttr.needsUpdate = true;
+
+    // Arrow + marker toward the objective.
+    const obj = this.statics.get(this.st.obj);
+    const show = !!obj && obj.alive && this.phase === 'play';
+    this.arrow.visible = this.marker.visible = this.markerLabel.mesh.visible = show;
+    if (!show) return;
+    const local = this.toCockpit(obj.p);
+    const d = local.length();
+    this.arrow.quaternion.setFromUnitVectors(_up, local.normalize());
+    const k = Math.max(1, d * 0.035);
+    this.marker.position.set(...obj.p);
+    this.marker.quaternion.copy(this.view.q);
+    this.marker.scale.setScalar(k * 18 / 10);
+    this.markerLabel.mesh.position.set(...obj.p).add(_v.set(0, k * 2.6, 0).applyQuaternion(this.view.q));
+    this.markerLabel.mesh.quaternion.copy(this.view.q);
+    this.markerLabel.mesh.scale.setScalar(k);
+    this.markerLabel.set(`TARGET · ${Math.round(d)} m · ${Math.round(this.st.objHp * 100)}%`);
+  }
+
+  updateDust() {
+    const p = this.view.p;
+    const v = this.view.vel;
+    const half = DUST_BOX / 2;
+    const out = this.dustPos;
+    const wrap = (b, c) => c + ((((b - c + half) % DUST_BOX) + DUST_BOX) % DUST_BOX) - half;
+    for (let i = 0; i < DUST; i++) {
+      const j = i * 3, o = i * 6;
+      const x = wrap(this.dustBase[j], p.x), y = wrap(this.dustBase[j + 1], p.y), z = wrap(this.dustBase[j + 2], p.z);
+      out[o] = x; out[o + 1] = y; out[o + 2] = z;
+      out[o + 3] = x - v.x * 0.05; out[o + 4] = y - v.y * 0.05; out[o + 5] = z - v.z * 0.05;
+    }
+    this.dustAttr.needsUpdate = true;
+  }
+
+  updateHud() {
+    const st = this.st;
+    const speed = this.isPilot ? this.ship.speed : this.view.vel.length();
+    this.hudCenter.set(this.phase === 'brief' ? 'READY FOR LAUNCH' : `LEVEL ${st.level}  ·  ${st.score} PTS`);
+    const color = st.hull < 30 ? '#ff6b6b' : st.shield < 30 ? '#ffb347' : '#7dffef';
+    this.hudLeft.set(`SHIELD ${Math.round(st.shield)}%\nHULL ${Math.round(st.hull)}%\nSPEED ${Math.round(speed)}`, color);
+    if (this.breaches.size) this.hudRight.set(`BREACHES: ${this.breaches.size}\nFIX THEM!`, '#ff6b6b');
+    else {
+      const obj = this.statics.get(st.obj);
+      const d = obj ? Math.round(dist(obj.p, this.view.p.toArray())) : 0;
+      this.hudRight.set(`OUTPOSTS LEFT ${this.outpostsLeft()}\nTARGET ${d} m`, '#ffee33');
+    }
+  }
+
+  // ---------- per-frame ----------
 
   update(dt, t) {
     this.updatePilot(dt);
-
-    // Where the ship is, as far as this player knows.
-    if (this.isPilot) {
-      this.shipView.x = this.ship.x;
-      this.shipView.y = this.ship.y;
-    } else if (this.isHost) {
-      const a = Math.min(1, dt * 15);
-      this.shipView.x += (this.remoteShip.x - this.shipView.x) * a;
-      this.shipView.y += (this.remoteShip.y - this.shipView.y) * a;
-    } else if (this.shipBuf.size) {
-      const s = this.shipBuf.sample(this.clock.remoteNow(performance.now()) - INTERP_DELAY_MS);
-      this.shipView.x = s[0];
-      this.shipView.y = s[1];
-    }
-    this.space.position.set(-this.shipView.x, -this.shipView.y, 0);
-
+    this.updateView(dt);
     if (this.isHost && this.phase === 'play') this.hostSim(dt);
+    if (this.isHost && this.phase === 'cleared') {
+      this.clearT -= dt;
+      if (this.clearT <= 0) this.nextLevel();
+    }
     this.sendSnapshot(dt);
-    this.syncViews(t);
+    if (this.sector) {
+      this.syncDynamic();
+      this.updateMines(t);
+      this.updateMap(t);
+      for (const mesh of this.staticViews.values()) {
+        const b = mesh.userData.beacon;
+        if (b) b.scale.setScalar(1 + Math.sin(t * 4) * 0.3);
+      }
+    }
     this.updateGuns(dt);
     this.updateBolts(dt);
     if (this.phase === 'play') this.updateRepairs(dt);
     this.fx.update(dt);
-    this.updateStars(dt);
+    this.updateDust();
 
     this.hurt = Math.max(0, this.hurt - dt * 1.5);
     this.hurtMesh.material.opacity = this.hurt * 0.5;
@@ -816,55 +1353,14 @@ export class Starship extends Game {
     this.hudAcc -= dt;
     if (this.hudAcc <= 0) {
       this.hudAcc = 0.25;
-      const st = this.st;
-      this.hudCenter.set(this.phase === 'brief' ? 'READY FOR LAUNCH' : `WAVE ${st.wave}  ·  ${st.score} PTS`);
-      const shipText = `SHIELD ${Math.round(st.shield)}%\nHULL ${Math.round(st.hull)}%`;
-      const color = st.hull < 30 ? '#ff6b6b' : st.shield < 30 ? '#ffb347' : '#7dffef';
-      this.hudLeft.set(shipText, color);
-      this.hudRight.set(this.breaches.size ? `BREACHES: ${this.breaches.size}\nFIX THEM!` : shipText, this.breaches.size ? '#ff6b6b' : color);
+      this.updateHud();
     }
-  }
-
-  syncViews(t) {
-    let source;
-    if (this.isHost) {
-      source = new Map();
-      for (const e of this.ents.values()) source.set(e.id, [e.type, e.p[0], e.p[1], e.p[2], e.r]);
-    } else {
-      source = this.buf.size ? this.buf.sample(this.clock.remoteNow(performance.now()) - INTERP_DELAY_MS) : new Map();
-    }
-    for (const [id, v] of source) {
-      const view = this.views.get(id) || this.makeView(id, v[0], v[4]);
-      view.mesh.position.set(v[1], v[2], v[3]);
-      if (view.type === ET.asteroid) view.mesh.rotation.set(t * view.spin, t * view.spin * 0.7, 0);
-      else if (view.type === ET.enemy) view.mesh.rotation.z = Math.sin(t * 2 + id) * 0.3;
-      else view.mesh.scale.setScalar(1 + Math.sin(t * 20 + id) * 0.2);
-    }
-    for (const id of [...this.views.keys()]) if (!source.has(id)) this.removeView(id);
-  }
-
-  updateStars(dt) {
-    const V = this.phase === 'play' ? this.st.speed : 8;
-    const len = Math.max(0.3, V * 0.06);
-    const s = this.star;
-    const out = this.streakPos;
-    for (let i = 0; i < STARS; i++) {
-      const j = i * 3;
-      s[j + 2] += V * dt;
-      if (s[j + 2] > 20) {
-        s[j + 2] -= 320;
-        s[j] = this.shipView.x + rand(-70, 70);
-        s[j + 1] = this.shipView.y + rand(-45, 45);
-      }
-      const o = i * 6;
-      out[o] = s[j]; out[o + 1] = s[j + 1]; out[o + 2] = s[j + 2];
-      out[o + 3] = s[j]; out[o + 4] = s[j + 1]; out[o + 5] = s[j + 2] - len;
-    }
-    this.streakAttr.needsUpdate = true;
   }
 
   dispose() {
     for (const h of this.app.hands) h.visual.visible = true;
+    this.app.camera.far = 1000;
+    this.app.camera.updateProjectionMatrix();
     super.dispose();
   }
 }

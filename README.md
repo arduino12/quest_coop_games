@@ -8,7 +8,7 @@ the Quest Browser.
 |---|---|---|
 | **Neon Handball** | 1 vs 1 | Smack a glowing ball down a neon tunnel with your hands. First to 7. |
 | **Fort Siege** | 1 vs 1 | 3 minutes to build a fort around your crystal, then a slingshot duel. |
-| **Starship Bridge** | co-op | One pilots, one shoots, both patch hull breaches. Survive the waves. |
+| **Starship Bridge** | co-op | Fly anywhere in a 360° sector, follow the map to enemy outposts and destroy them through mines and fighters. |
 
 Every game also works solo for practice.
 
@@ -23,14 +23,20 @@ Voice chat is built in (allow the microphone when asked).
 
 ### Controls
 
-- **Neon Handball:** your hands are the paddles; swing at the ball. The left stick slides you around your end.
+- **Neon Handball:** your hands are the paddles; swing at the ball. The play space floats between hip and head height, so every ball is reachable. The left stick slides you around your end.
 - **Fort Siege:**
   - *Build phase:* squeeze the grip on the shelf to your left to take a block, then release to drop or throw it. Blocks snap straight when released almost level. Left stick moves you, right stick turns.
   - *Battle phase:* squeeze the slingshot pouch, pull back (the dotted arc shows where it lands), and let go.
-- **Starship Bridge:**
-  - *Pilot:* grab the joystick, or use the left thumbstick, to dodge.
-  - *Gunner:* aim with your hands and pull the triggers.
+- **Starship Bridge:** each level is a sector with enemy outposts to destroy. The holographic map
+  in front of you shows outposts (the current target in yellow), fighters and nearby mines, and the
+  yellow arrow above it points to the target.
+  - *Pilot:* grab the joystick, or use the left thumbstick, to turn and climb (all the way round).
+    Grab the throttle lever, or use the right thumbstick, to set speed. The trigger on the joystick
+    hand fires the nose guns.
+  - *Gunner:* aim with your hands and pull the triggers. Shoot mines before you fly into them;
+    pink mines chase you.
   - *Everyone:* hold the grip on a sparking red panel for about a second to fix it.
+  - Sitting still is deadly: turrets and fighters lead their shots.
 
 ## Running it
 
@@ -60,6 +66,7 @@ Or, with the headset on USB and `adb` available (SideQuest ships one): run `npm 
 
 - `http://localhost:5173/?emu` emulates a Quest 2 in the browser, using Meta's Immersive Web Emulator.
 - `http://localhost:5173/duo.html` opens a host and a guest side by side, already connected (for development).
+  It links them inside the browser (`?loop`), so it also works on a PC whose VPN blocks peer-to-peer.
 
 ## How it works
 
