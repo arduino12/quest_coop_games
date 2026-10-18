@@ -91,7 +91,7 @@ export class Label {
 // A clickable panel: title, wrapped text lines and a grid of buttons.
 // Buttons: { label, onClick, enabled = true, accent }.
 export class Panel {
-  constructor({ w = 1.2, h = 0.8, res = 768, title = '', lines = [], buttons = [], cols = 1, accent = '#22e6ff' } = {}) {
+  constructor({ w = 1.2, h = 0.8, res = 768, title = '', lines = [], buttons = [], cols = 1, accent = '#22e6ff', lineScale = 1 } = {}) {
     Object.assign(this, makeCanvasMesh(w, h, res));
     this.mesh.userData.panel = this;
     this.hoverIndex = -1;
@@ -100,6 +100,7 @@ export class Panel {
     this.buttons = buttons;
     this.cols = cols;
     this.accent = accent;
+    this.lineScale = lineScale;
     this.dirty = true;
     this.layout();
     this.draw();
@@ -161,7 +162,7 @@ export class Panel {
       ctx.fillText(this.title, pad, y, W - pad * 2);
       y += fs * 1.35;
     }
-    const fs = W * 0.042;
+    const fs = W * 0.042 * this.lineScale;
     ctx.font = `500 ${fs}px ${FONT}`;
     ctx.fillStyle = '#dfe8ff';
     for (const line of this.lines) {

@@ -151,6 +151,8 @@ export class App {
     for (const h of this.hands) h.visual.visible = true;
     this.avatar.setHandDotsVisible(true);
     this.menuHold = 0;
+    this.toastLabel.mesh.visible = false; // don't carry the last game's message over
+    this.toastTime = 0;
     this.game = new GameClass(this, opts);
   }
 
@@ -168,7 +170,9 @@ export class App {
 
   resetHandTracking() { for (const h of this.hands) h.fresh = true; }
 
+  // A game can show messages its own way (e.g. on a cockpit screen) by implementing onToast().
   toast(text, seconds = 2.5) {
+    if (this.game?.onToast?.(text, seconds)) return;
     this.toastLabel.set(text);
     this.toastLabel.mesh.visible = true;
     this.toastTime = seconds;

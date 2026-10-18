@@ -388,6 +388,22 @@ export class Starship extends Game {
     this.panel = this.app.ui.add(new Panel({ w: 1.4, h: 1.05, accent: '#7dff8a' }));
     this.panel.mesh.position.set(0, 1.62, -0.95);
     this.root.add(this.panel.mesh);
+
+    // Messages go on a banner along the top of the windshield, never across the view.
+    this.banner = new Label('', { w: 1.9, h: 0.24, res: 1024, size: 0.4, bg: 'rgba(5,8,20,0.85)', color: '#ffee33' });
+    this.banner.mesh.position.set(0, 2.3, -1.0);
+    this.banner.mesh.rotation.x = 0.35; // tilted down toward the crew
+    this.banner.mesh.visible = false;
+    this.bannerT = 0;
+    this.root.add(this.banner.mesh);
+  }
+
+  onToast(text, seconds) {
+    this.banner.set(text.replace(/\n/g, '  ·  '));
+    this.banner.mesh.visible = true;
+    this.bannerT = seconds;
+    this.app.sfx.tone({ f: 1046, dur: 0.08, type: 'triangle', vol: 0.1 });
+    return true;
   }
 
   buildMarker() {
@@ -1345,6 +1361,11 @@ export class Starship extends Game {
     if (this.phase === 'play') this.updateRepairs(dt);
     this.fx.update(dt);
     this.updateDust();
+
+    if (this.bannerT > 0) {
+      this.bannerT -= dt;
+      if (this.bannerT <= 0) this.banner.mesh.visible = false;
+    }
 
     this.hurt = Math.max(0, this.hurt - dt * 1.5);
     this.hurtMesh.material.opacity = this.hurt * 0.5;

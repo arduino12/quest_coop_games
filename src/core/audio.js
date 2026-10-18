@@ -41,6 +41,8 @@ export class Sfx {
     camera.getWorldQuaternion(_q);
     _f.set(0, 0, -1).applyQuaternion(_q);
     _u.set(0, 1, 0).applyQuaternion(_q);
+    // The very first XR frames can report an invalid pose; skip them.
+    if (![_p.x, _p.y, _p.z, _f.x, _f.y, _f.z, _u.x, _u.y, _u.z].every(Number.isFinite)) return;
     const L = this.ctx.listener;
     if (L.positionX) {
       L.positionX.value = _p.x; L.positionY.value = _p.y; L.positionZ.value = _p.z;

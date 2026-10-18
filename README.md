@@ -7,6 +7,11 @@ the Quest Browser.
 | Game | Mode | In one line |
 |---|---|---|
 | **Neon Handball** | 1 vs 1 | Smack a glowing ball down a neon tunnel with your hands. First to 7. |
+| **Laser Fencing** | 1 vs 1 | Sword in your right hand, shield in your left. First to 5 touches. |
+| **Zero-G Dodgeball** | 1 vs 1 | Float in a cube, pull yourself along the walls, throw balls. First to 7 hits. |
+| **Climbing Race** | 1 vs 1 | Race up side-by-side walls to the bell; drop rocks on your rival. |
+| **Rhythm Battle** | 1 vs 1 | Punch notes to a generated beat; big combos send extra notes to your rival. |
+| **Bomb Squad** | co-op | One defuses a bomb, the other has the manual, in separate rooms. Talk! |
 | **Fort Siege** | 1 vs 1 | 3 minutes to build a fort around your crystal, then a slingshot duel. |
 | **Starship Bridge** | co-op | Fly anywhere in a 360° sector, follow the map to enemy outposts and destroy them through mines and fighters. |
 
@@ -24,6 +29,11 @@ Voice chat is built in (allow the microphone when asked).
 ### Controls
 
 - **Neon Handball:** your hands are the paddles; swing at the ball. The play space floats between hip and head height, so every ball is reachable. The left stick slides you around your end.
+- **Laser Fencing:** your own headset judges hits on you, so blocks you see are blocks that count. A touch needs a real swing; slow pokes don't score. Solo: slash orbs for 60 seconds.
+- **Zero-G Dodgeball:** squeeze near any wall or pillar to grab it and pull yourself; let go to drift. Left stick = gentle thrusters. Squeeze near a ball to grab it, swing and let go to throw. Only direct hits count.
+- **Climbing Race:** squeeze to grip a hold and pull yourself up. Let go of everything and you fall to the last ledge. Rocks fall from the top; the red button on each ledge drops 3 rocks on your rival. Ring the bell first.
+- **Rhythm Battle:** blue notes = left hand, pink = right; punch them as they reach the rings. The lanes fit your height when the song starts. Every 16 combo sends yellow attack notes to your rival.
+- **Bomb Squad:** the defuser points and pulls the trigger to cut wires, press keys, hold the button and spin the password letters. The expert flips manual pages with the buttons under it. Three strikes and it explodes. Solo: the manual hangs on the wall to your right.
 - **Fort Siege:**
   - *Build phase:* squeeze the grip on the shelf to your left to take a block, then release to drop or throw it. Blocks snap straight when released almost level. Left stick moves you, right stick turns.
   - *Battle phase:* squeeze the slingshot pouch, pull back (the dotted arc shows where it lands), and let go.
