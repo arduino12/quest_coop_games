@@ -12,6 +12,8 @@ the Quest Browser.
 | **Climbing Race** | 1 vs 1 | Race up side-by-side walls to the bell; drop rocks on your rival. |
 | **Rhythm Battle** | 1 vs 1 | Punch notes to a generated beat; big combos send extra notes to your rival. |
 | **Bomb Squad** | co-op | One defuses a bomb, the other has the manual, in separate rooms. Talk! |
+| **Pizza Rush** | co-op | Orders pour in: stretch dough, sauce, top, bake and serve, with a friend or the robot helper. |
+| **Bullet Time** | co-op | Time only moves when you move. Shoot, punch and throw your way through the red enemies. |
 | **Fort Siege** | 1 vs 1 | 3 minutes to build a fort around your crystal, then a slingshot duel. |
 | **Starship Bridge** | co-op | Fly anywhere in a 360° sector, follow the map to enemy outposts and destroy them through mines and fighters. |
 
@@ -23,17 +25,20 @@ Every game also works solo for practice.
 2. The other player types the code and presses **Join**.
 3. Both press **Enter VR**. In the menu room, point at a game and pull the trigger.
 4. In any game, **hold B or Y for one second** to go back to the menu.
+5. **Leave room** in the menu takes you back to the create/join page.
 
 Voice chat is built in (allow the microphone when asked).
 
 ### Controls
 
-- **Neon Handball:** your hands are the paddles; swing at the ball. The play space floats between hip and head height, so every ball is reachable. The left stick slides you around your end.
+- **Neon Handball:** your hands are the paddles; swing at the ball. Press A / X (or use the panel beside you) to switch between a sphere and a cube paddle; the cube turns with your wrist and gives cleaner angles. The play space floats between hip and head height, so every ball is reachable. The left stick slides you around your end.
 - **Laser Fencing:** your own headset judges hits on you, so blocks you see are blocks that count. A touch needs a real swing; slow pokes don't score. Solo: slash orbs for 60 seconds.
 - **Zero-G Dodgeball:** squeeze near any wall or pillar to grab it and pull yourself; let go to drift. Left stick = gentle thrusters. Squeeze near a ball to grab it, swing and let go to throw. Only direct hits count.
 - **Climbing Race:** squeeze to grip a hold and pull yourself up. Let go of everything and you fall to the last ledge. Rocks fall from the top; the red button on each ledge drops 3 rocks on your rival. Ring the bell first.
 - **Rhythm Battle:** blue notes = left hand, pink = right; punch them as they reach the rings. The lanes fit your height when the song starts. Every 16 combo sends yellow attack notes to your rival.
 - **Bomb Squad:** the defuser points and pulls the trigger to cut wires, press keys, hold the button and spin the password letters. The expert flips manual pages with the buttons under it. Three strikes and it explodes. Solo: the manual hangs on the wall to your right.
+- **Pizza Rush:** read the tickets above the counter (size, dough, sauce, cheese, toppings). Grip a dough ball (left), put your second hand on it and pull apart until the size ring says S / M / L. Hold a sauce bottle over it and pull the trigger, drop cheese and toppings on it, bake it in the oven (right) until it says READY, and put it on the green SERVE spot. Burnt or wrong pizzas cost points; fast ones earn tips. The robot helper (on in solo, optional with a friend) preps dough and serves pizzas from the oven.
+- **Bullet Time:** time runs at about 5% while you stand still and speeds up as you move. Grip the gun floating in front of you; the trigger fires (6 shots). Throw the empty gun at an enemy (a new one appears after a moment), or punch them. Enemy bullets leave trails; dodge them. If either player is hit, the level restarts.
 - **Fort Siege:**
   - *Build phase:* squeeze the grip on the shelf to your left to take a block, then release to drop or throw it. Blocks snap straight when released almost level. Left stick moves you, right stick turns.
   - *Battle phase:* squeeze the slingshot pouch, pull back (the dotted arc shows where it lands), and let go.

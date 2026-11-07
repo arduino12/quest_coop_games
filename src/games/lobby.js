@@ -22,19 +22,21 @@ export class Lobby extends Game {
     app.setRig(x, 0, 0.3, 0);
 
     this.panel = app.ui.add(new Panel({
-      w: 1.9, h: 1.45, res: 1024, cols: 2, title: 'Pick a game',
-      lines: [
-        'Point a controller at a game and pull the trigger. Either player can pick.',
-        'In any game: hold B or Y for one second to come back here.',
+      w: 2.3, h: 1.6, res: 1280, cols: 3, title: 'Pick a game',
+      buttons: [
+        ...MENU.map((g) => ({ label: g.label, accent: g.accent, onClick: () => app.requestGame(g.id) })),
+        { label: 'Leave room', accent: '#ff6b6b', onClick: () => app.onLeave?.() },
       ],
-      buttons: MENU.map((g) => ({ label: g.label, accent: g.accent, onClick: () => app.requestGame(g.id) })),
     }));
     this.panel.mesh.position.set(0, 1.45, -1.7);
     root.add(this.panel.mesh);
 
-    this.status = new Label('', { w: 1.6, h: 0.12, res: 1024, size: 0.55, color: '#9fb4ff' });
-    this.status.mesh.position.set(0, 2.32, -1.7);
+    this.status = new Label('', { w: 1.8, h: 0.12, res: 1024, size: 0.55, color: '#9fb4ff' });
+    this.status.mesh.position.set(0, 2.38, -1.7);
     root.add(this.status.mesh);
+    const hint = new Label('Cyan = 1 vs 1   ·   Green = co-op   ·   Point and pull the trigger   ·   Hold B / Y in a game for this menu', { w: 2.3, h: 0.08, res: 1280, size: 0.55, color: '#9fb4ff' });
+    hint.mesh.position.set(0, 0.57, -1.7);
+    root.add(hint.mesh);
     this.statusTimer = 0;
   }
 

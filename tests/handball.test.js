@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { T, stepBall, paddleHit, newBall, baseSpeed, MIN_FORWARD, sideOf } from '../src/games/handball/logic.js';
+import { T, stepBall, paddleHit, cubeHit, CUBE_HALF, newBall, baseSpeed, MIN_FORWARD, sideOf } from '../src/games/handball/logic.js';
 
 const liveBall = (p, v) => ({ p, v, hits: 0, live: true, server: 'host' });
 
@@ -85,5 +85,30 @@ describe('paddleHit', () => {
     expect(b.live).toBe(true);
     expect(b.v[2]).toBeGreaterThan(0);
     expect(sideOf(b.p[2])).toBe('guest');
+  });
+});
+
+describe('cubeHit', () => {
+  const flat = [0, 0, 0, 1];
+  it('bounces off the front face of a cube held level', () => {
+    const b = liveBall([0, 1.2, 5.0 - CUBE_HALF - 0.05], [0, 0, 6]);
+    expect(cubeHit(b, [0, 1.2, 5.0], flat, [0, 0, -1], 'host')).toBe(true);
+    expect(b.v[2]).toBeLessThan(0);
+    expect(b.p[2]).toBeLessThanOrEqual(5.0 - CUBE_HALF - T.ballR + 1e-9);
+  });
+  it('misses when the ball is beyond the corner', () => {
+    const b = liveBall([CUBE_HALF + T.ballR + 0.05, 1.2, 5.0], [0, 0, 6]);
+    expect(cubeHit(b, [0, 1.2, 5.0], flat, [0, 0, 0], 'host')).toBe(false);
+  });
+  it('a cube turned 45 degrees still reaches a ball at its corner', () => {
+    const s = Math.sin(Math.PI / 8), c = Math.cos(Math.PI / 8);
+    const q = [0, s, 0, c]; // 45 degrees about y: a corner now points at -z
+    const b = liveBall([0, 1.2, 5.0 - CUBE_HALF * Math.SQRT2 - 0.05], [0, 0, 6]);
+    expect(cubeHit(b, [0, 1.2, 5.0], q, [0, 0, -1], 'host')).toBe(true);
+  });
+  it('pushes a ball that ended up inside the cube back out', () => {
+    const b = liveBall([0, 1.2, 4.97], [0, 0, 6]);
+    expect(cubeHit(b, [0, 1.2, 5.0], flat, [0, 0, -2], 'host')).toBe(true);
+    expect(Math.abs(b.p[2] - 5.0)).toBeGreaterThanOrEqual(CUBE_HALF + T.ballR - 1e-9);
   });
 });

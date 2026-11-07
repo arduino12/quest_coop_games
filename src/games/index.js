@@ -7,6 +7,8 @@ import { Fencing } from './fencing/fencing.js';
 import { Dodgeball } from './dodgeball/dodgeball.js';
 import { Climb } from './climb/climb.js';
 import { Rhythm } from './rhythm/rhythm.js';
+import { Pizza } from './pizza/pizza.js';
+import { BulletTime } from './bullettime/bullettime.js';
 
 export const GAMES = {
   lobby: Lobby,
@@ -18,5 +20,7 @@ export const GAMES = {
   dodgeball: Dodgeball,
   climb: Climb,
   rhythm: Rhythm,
+  pizza: Pizza,
+  bullettime: BulletTime,
 };
 

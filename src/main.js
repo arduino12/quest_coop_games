@@ -77,6 +77,7 @@ async function startApp() {
   await physicsReady;
   app = new App(net, sfx);
   app.onSessionEnd = () => $('overlay').classList.remove('hidden');
+  app.onLeave = leaveRoom;
   window.app = app; // handy for debugging from the console
   net.on('connect', updateRoomInfo);
   net.on('disconnect', updateRoomInfo);
@@ -162,12 +163,15 @@ $('btn-join').onclick = () => join($('inp-code').value);
 $('inp-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') join($('inp-code').value); });
 $('btn-solo').onclick = solo;
 $('btn-vr').onclick = enterVR;
-$('btn-leave').onclick = () => {
+// Back to the create/join screen: leave VR, drop the connection, reload without the room.
+async function leaveRoom() {
+  try { await app?.renderer.xr.getSession()?.end(); } catch { /* not in VR */ }
+  net.destroy();
   const url = new URL(location.href);
-  url.searchParams.delete('room');
-  url.searchParams.delete('auto');
+  for (const k of ['room', 'auto', 'host', 'code', 'solo', 'vr']) url.searchParams.delete(k);
   location.href = url.toString();
-};
+}
+$('btn-leave').onclick = leaveRoom;
 
 if (params.get('voice') === '0') $('chk-voice').checked = false;
 const room = params.get('room');

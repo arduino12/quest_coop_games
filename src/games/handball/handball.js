@@ -5,7 +5,7 @@ import { smoothMove } from '../../core/locomotion.js';
 import { glowMat, lineMat, rectLoop, starfield } from '../../core/env.js';
 import { COLORS, CSS_COLORS } from '../../config.js';
 import {
-  T, WIN_SCORE, MAX_SPEED, stepBall, paddleHit, sideOf, otherSide, newBall, cloneBall,
+  T, WIN_SCORE, MAX_SPEED, CUBE_HALF, stepBall, paddleHit, cubeHit, sideOf, otherSide, newBall, cloneBall,
 } from './logic.js';
 
 const PLAYER_Z = 6.0;
@@ -13,6 +13,7 @@ const SUBSTEPS = 4;
 const HIT_COOLDOWN = 0.15;
 const TRAIL = 24;
 const BEST_KEY = 'qcg-handball-best';
+const PADDLE_KEY = 'qcg-handball-paddle';
 
 const _hp = new THREE.Vector3();
 
@@ -36,12 +37,15 @@ export class Handball extends Game {
     this.handPrev = app.hands.map((h) => h.pos.clone());
     this.lastHit = -1;
     this.trail = [];
+    this.paddle = localStorage.getItem(PADDLE_KEY) === 'cube' ? 'cube' : 'sphere';
+    this.theirPaddle = 'sphere';
 
     this.buildScene();
     this.buildHands();
     app.setRig(0, 0, this.mySide === 'host' ? PLAYER_Z : -PLAYER_Z, this.mySide === 'host' ? 0 : Math.PI);
     app.toast(this.solo ? 'Practice: smack the ball at the far wall!' : `First to ${WIN_SCORE} wins!\nHit the ball with your hands`, 4);
     if (!this.isHost) app.sendGame('join');
+    app.sendGame('paddle', { shape: this.paddle });
     this.refreshScore();
   }
 
@@ -147,19 +151,67 @@ export class Handball extends Game {
       g.add(shell);
       return g;
     };
+    const cube = (color) => {
+      const g = new THREE.Group();
+      const geo = new THREE.BoxGeometry(CUBE_HALF * 2, CUBE_HALF * 2, CUBE_HALF * 2);
+      g.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.25, depthWrite: false })));
+      g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color })));
+      return g;
+    };
+    const paddle = (parent, color) => {
+      const g = this.attach(parent, new THREE.Group());
+      g.add(orb(color), cube(color));
+      return g;
+    };
     this.myOrbs = app.hands.map((h) => {
       h.visual.visible = false;
-      return this.attach(h.grip, orb(app.myColor));
+      return paddle(h.grip, app.myColor);
     });
     app.avatar.setHandDotsVisible(false);
-    this.attach(app.avatar.hands.left, orb(app.partnerColor));
-    this.attach(app.avatar.hands.right, orb(app.partnerColor));
+    this.theirPaddles = [paddle(app.avatar.hands.left, app.partnerColor), paddle(app.avatar.hands.right, app.partnerColor)];
+    this.showPaddles();
+
+    // Paddle picker beside you (or press A / X).
+    this.paddlePanel = app.ui.add(new Panel({ w: 0.6, h: 0.32, res: 512, cols: 2 }));
+    const host = this.mySide === 'host';
+    this.paddlePanel.mesh.position.set(host ? 1.25 : -1.25, 1.1, host ? PLAYER_Z - 0.6 : -PLAYER_Z + 0.6);
+    this.paddlePanel.mesh.rotation.y = host ? -0.9 : Math.PI - 0.9;
+    this.root.add(this.paddlePanel.mesh);
+    this.refreshPaddlePanel();
+  }
+
+  showPaddles() {
+    const set = (g, shape) => { g.children[0].visible = shape === 'sphere'; g.children[1].visible = shape === 'cube'; };
+    for (const g of this.myOrbs) set(g, this.paddle);
+    for (const g of this.theirPaddles) set(g, this.theirPaddle);
+  }
+
+  setPaddle(shape) {
+    if (shape === this.paddle) return;
+    this.paddle = shape;
+    localStorage.setItem(PADDLE_KEY, shape);
+    this.app.sendGame('paddle', { shape });
+    this.showPaddles();
+    this.refreshPaddlePanel();
+    this.app.sfx.click();
+  }
+
+  refreshPaddlePanel() {
+    this.paddlePanel.set({
+      title: 'Paddle (A / X)',
+      buttons: ['sphere', 'cube'].map((shape) => ({
+        label: shape === 'sphere' ? 'Sphere' : 'Cube',
+        accent: shape === this.paddle ? '#7dff8a' : '#22e6ff',
+        onClick: () => this.setPaddle(shape),
+      })),
+    });
   }
 
   // ---------- simulation ----------
 
   update(dt, t) {
     this.locomote(dt);
+    if (this.app.hands.some((h) => h.connected && h.state.a.down)) this.setPaddle(this.paddle === 'sphere' ? 'cube' : 'sphere');
     if (this.phase === 'play' && !this.frozen) this.simulate(dt);
     this.app.hands.forEach((h, i) => this.handPrev[i].copy(h.pos));
     this.render(dt, t);
@@ -195,7 +247,10 @@ export class Handball extends Game {
         const hand = app.hands[i];
         if (!hand.connected) continue;
         _hp.lerpVectors(this.handPrev[i], hand.pos, s / SUBSTEPS);
-        if (paddleHit(b, _hp.toArray(), hand.vel.toArray(), this.mySide)) {
+        const hit = this.paddle === 'cube'
+          ? cubeHit(b, _hp.toArray(), hand.quat.toArray(), hand.vel.toArray(), this.mySide)
+          : paddleHit(b, _hp.toArray(), hand.vel.toArray(), this.mySide);
+        if (hit) {
           b.hits++;
           this.lastHit = app.time;
           this.onMyHit(hand, i);
@@ -292,7 +347,8 @@ export class Handball extends Game {
   }
 
   onNet(k, d) {
-    if (k === 'join' && this.isHost) this.broadcastState();
+    if (k === 'paddle') { this.theirPaddle = d.shape; this.showPaddles(); return; }
+    if (k === 'join' && this.isHost) { this.broadcastState(); this.app.sendGame('paddle', { shape: this.paddle }); }
     else if (k === 'ball') {
       if (this.phase !== 'play') return;
       this.ball = d.b;

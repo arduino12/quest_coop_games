@@ -1,11 +1,15 @@
-// Menu order and labels.
+// Menu order and labels. Cyan = 1 vs 1, green = co-op.
+const VS = '#22e6ff';
+const COOP = '#7dff8a';
 export const MENU = [
-  { id: 'handball', label: 'Neon Handball · 1v1' },
-  { id: 'fencing', label: 'Laser Fencing · 1v1' },
-  { id: 'dodgeball', label: 'Zero-G Dodgeball · 1v1' },
-  { id: 'climb', label: 'Climbing Race · 1v1' },
-  { id: 'rhythm', label: 'Rhythm Battle · 1v1' },
-  { id: 'fortsiege', label: 'Fort Siege · 1v1' },
-  { id: 'starship', label: 'Starship Bridge · co-op', accent: '#7dff8a' },
-  { id: 'bombsquad', label: 'Bomb Squad · co-op', accent: '#7dff8a' },
+  { id: 'handball', label: 'Handball', accent: VS },
+  { id: 'fencing', label: 'Fencing', accent: VS },
+  { id: 'dodgeball', label: 'Dodgeball', accent: VS },
+  { id: 'climb', label: 'Climbing', accent: VS },
+  { id: 'rhythm', label: 'Rhythm', accent: VS },
+  { id: 'fortsiege', label: 'Fort Siege', accent: VS },
+  { id: 'starship', label: 'Starship', accent: COOP },
+  { id: 'bombsquad', label: 'Bomb Squad', accent: COOP },
+  { id: 'pizza', label: 'Pizza Rush', accent: COOP },
+  { id: 'bullettime', label: 'Bullet Time', accent: COOP },
 ];
