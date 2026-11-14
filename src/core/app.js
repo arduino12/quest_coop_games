@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Hand } from './input.js';
 import { UI, Label } from './ui3d.js';
 import { RemoteAvatar } from './avatar.js';
+import { FaceShare } from './faces.js';
 import { Particles } from './env.js';
 import { r3, r4 } from './sync.js';
 import { GAMES } from '../games/index.js';
@@ -47,6 +48,8 @@ export class App {
     this.ui = new UI(this);
     this.particles = new Particles(this.scene);
     this.avatar = new RemoteAvatar(this.scene);
+    this.myFace = null; // set by the start page
+    this.faceShare = new FaceShare(this);
 
     this.toastLabel = new Label('', { w: 1.4, h: 0.32, res: 768, size: 0.42, bg: 'rgba(5,8,20,0.75)' });
     this.toastLabel.mesh.position.set(0, -0.22, -1.3);

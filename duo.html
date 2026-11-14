@@ -18,7 +18,9 @@
       const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
       const code = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
       const base = './?emu&voice=0&auto&vr&loop';
-      document.getElementById('host').src = `${base}&host&code=${code}`;
+      // ?hostface=/faces/x.glb gives the host a face scan (dev server only).
+      const hostFace = new URLSearchParams(location.search).get('hostface');
+      document.getElementById('host').src = `${base}&host&code=${code}${hostFace ? `&face=${hostFace}` : ''}`;
       setTimeout(() => { document.getElementById('guest').src = `${base}&room=${code}`; }, 3000);
     </script>
   </body>

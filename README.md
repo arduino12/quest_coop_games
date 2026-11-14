@@ -96,8 +96,13 @@ Face scans stay private: they are never committed to this repository or put on t
 2. **Copy the .glb to the Quest** (for example with SideQuest, or `adb push faces/arad01.glb /sdcard/Download/`).
 3. On the start page in the Quest Browser, press **Choose face file** and pick it. It is stored in the headset's
    browser only.
-4. In VR open **Face Lab**: size, turn, nod, tilt, height, auto-spin, body on/off, and **Mirror** mode, where the
-   scan becomes the head of a body that copies your movements. **Save** keeps that setup for your avatar.
+4. In VR open **Face Lab**: size, turn, nod, tilt, height, **neck** length, auto-spin, body on/off, and **Mirror**
+   mode, where the scan becomes the head of a body that copies your movements. The head turns around the base
+   of the neck, so a scan that includes its own neck stays attached: set **Neck** to 0 for those. **Save** keeps
+   that setup for your avatar.
+5. In every multiplayer game your partner sees you as a body with your face (and you see theirs). Faces go
+   directly from headset to headset over the game's peer-to-peer link, never to the website; untick
+   **Show my face to my partner** on the start page to keep yours private.
 
 On the PC, `?face=/faces/arad01.glb` loads a converted scan straight from the dev server.
 

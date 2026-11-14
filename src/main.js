@@ -81,6 +81,8 @@ async function startApp() {
   app.onSessionEnd = () => $('overlay').classList.remove('hidden');
   app.onLeave = leaveRoom;
   app.myFace = myFace;
+  app.faceShare.allowed = $('chk-face-share').checked;
+  app.faceShare.sendMine();
   window.app = app; // handy for debugging from the console
   net.on('connect', updateRoomInfo);
   net.on('disconnect', updateRoomInfo);
@@ -182,7 +184,10 @@ function showFace() {
   el.textContent = myFace ? `${myFace.name} (${(myFace.bytes.byteLength / 1024 / 1024).toFixed(1)} MB)` : 'No face scan';
   el.classList.toggle('ok', !!myFace);
   $('btn-face-remove').hidden = !myFace;
-  if (app) app.myFace = myFace;
+  if (app && app.myFace !== myFace) {
+    app.myFace = myFace;
+    app.faceShare.sendMine();
+  }
 }
 
 $('inp-face').onchange = async (e) => {
@@ -202,6 +207,12 @@ $('inp-face').onchange = async (e) => {
   try { await saveMyFace(file.name, bytes); } catch (err) { console.warn('[face] could not store', err); }
   setStatus('Face scan saved on this device.');
   showFace();
+};
+
+$('chk-face-share').checked = localStorage.getItem('qcg-share-face') !== '0';
+$('chk-face-share').onchange = (e) => {
+  try { localStorage.setItem('qcg-share-face', e.target.checked ? '1' : '0'); } catch { /* ignore */ }
+  app?.faceShare.setAllowed(e.target.checked);
 };
 
 $('btn-face-remove').onclick = async () => {
