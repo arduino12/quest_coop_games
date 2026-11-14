@@ -14,6 +14,7 @@ the Quest Browser.
 | **Bomb Squad** | co-op | One defuses a bomb, the other has the manual, in separate rooms. Talk! |
 | **Pizza Rush** | co-op | Orders pour in: stretch dough, sauce, top, bake and serve, with a friend or the robot helper. |
 | **Bullet Time** | co-op | Time only moves when you move. Shoot, punch and throw your way through the red enemies. |
+| **Face Lab** | solo | See your own 3D face scan: size, turn, nod, tilt, auto-spin, a body, and a mirror that copies you. |
 | **Fort Siege** | 1 vs 1 | 3 minutes to build a fort around your crystal, then a slingshot duel. |
 | **Starship Bridge** | co-op | Fly anywhere in a 360° sector, follow the map to enemy outposts and destroy them through mines and fighters. |
 
@@ -82,6 +83,23 @@ Or, with the headset on USB and `adb` available (SideQuest ships one): run `npm 
 - `http://localhost:5173/?emu` emulates a Quest 2 in the browser, using Meta's Immersive Web Emulator.
 - `http://localhost:5173/duo.html` opens a host and a guest side by side, already connected (for development).
   It links them inside the browser (`?loop`), so it also works on a PC whose VPN blocks peer-to-peer.
+
+## Your face in VR (Face Lab)
+
+Face scans stay private: they are never committed to this repository or put on the website.
+
+1. **Convert the scan on the PC** (OBJ + MTL + texture, e.g. from EXStar) into a light model for the Quest:
+   ```bash
+   npm run face -- "C:\Users\you\Documents\EXStar\arad01.obj"
+   ```
+   This writes `faces/arad01.glb` (about 1.3 MB, 50k triangles). `faces/` is ignored by git.
+2. **Copy the .glb to the Quest** (for example with SideQuest, or `adb push faces/arad01.glb /sdcard/Download/`).
+3. On the start page in the Quest Browser, press **Choose face file** and pick it. It is stored in the headset's
+   browser only.
+4. In VR open **Face Lab**: size, turn, nod, tilt, height, auto-spin, body on/off, and **Mirror** mode, where the
+   scan becomes the head of a body that copies your movements. **Save** keeps that setup for your avatar.
+
+On the PC, `?face=/faces/arad01.glb` loads a converted scan straight from the dev server.
 
 ## How it works
 

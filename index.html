@@ -28,6 +28,15 @@
           <button id="btn-leave" class="ghost">Leave room</button>
         </section>
 
+        <section id="face-box">
+          <div class="face-row">
+            <span id="face-status">No face scan</span>
+            <label class="filebtn">Choose face file<input type="file" id="inp-face" accept=".glb,model/gltf-binary" hidden /></label>
+            <button id="btn-face-remove" class="ghost small" hidden>Remove</button>
+          </div>
+          <p class="hint">Your face scan (.glb) stays on this headset. See it in VR in <b>Face Lab</b>.</p>
+        </section>
+
         <p id="status"></p>
         <p class="hint">
           One player creates a room and sends the 4-letter code (or the invite link) to the other.

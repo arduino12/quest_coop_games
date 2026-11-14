@@ -97,3 +97,14 @@ button.ghost { background: transparent; }
 #status.error { color: var(--danger); }
 
 .hint { font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 0; }
+
+#face-box { margin-top: 18px; padding-top: 14px; border-top: 1px solid #2a3366; gap: 6px; }
+.face-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+#face-status { flex: 1; min-width: 0; color: var(--muted); }
+#face-status.ok { color: #7dff8a; font-weight: 700; }
+.filebtn {
+  font-weight: 700; font-size: 16px; padding: 10px 14px; border-radius: 12px; cursor: pointer;
+  border: 1px solid #b06bff; color: var(--text); background: #1d1538;
+}
+button.small { font-size: 15px; padding: 9px 12px; }
+#face-box .hint { margin: 0; }

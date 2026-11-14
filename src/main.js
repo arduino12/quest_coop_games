@@ -3,6 +3,7 @@ import { Net, LoopbackNet } from './core/net.js';
 import { App } from './core/app.js';
 import { Sfx } from './core/audio.js';
 import { getMic, Voice } from './core/voice.js';
+import { loadMyFace, saveMyFace, removeMyFace } from './core/faces.js';
 
 const params = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -23,6 +24,7 @@ let net = new NetClass();
 let app = null;
 let voice = null;
 let mic = null;
+let myFace = null; // { name, bytes } of your own face scan, kept in this browser only
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const makeCode = () => Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
@@ -78,6 +80,7 @@ async function startApp() {
   app = new App(net, sfx);
   app.onSessionEnd = () => $('overlay').classList.remove('hidden');
   app.onLeave = leaveRoom;
+  app.myFace = myFace;
   window.app = app; // handy for debugging from the console
   net.on('connect', updateRoomInfo);
   net.on('disconnect', updateRoomInfo);
@@ -172,6 +175,51 @@ async function leaveRoom() {
   location.href = url.toString();
 }
 $('btn-leave').onclick = leaveRoom;
+
+// ---- your face scan ----
+function showFace() {
+  const el = $('face-status');
+  el.textContent = myFace ? `${myFace.name} (${(myFace.bytes.byteLength / 1024 / 1024).toFixed(1)} MB)` : 'No face scan';
+  el.classList.toggle('ok', !!myFace);
+  $('btn-face-remove').hidden = !myFace;
+  if (app) app.myFace = myFace;
+}
+
+$('inp-face').onchange = async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!/\.glb$/i.test(file.name)) {
+    setStatus('Choose a .glb file (convert scans on the PC with: npm run face -- scan.obj).', true);
+    return;
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    setStatus('That file is too big for the headset; convert it with npm run face first.', true);
+    return;
+  }
+  const bytes = await file.arrayBuffer();
+  myFace = { name: file.name, bytes };
+  try { await saveMyFace(file.name, bytes); } catch (err) { console.warn('[face] could not store', err); }
+  setStatus('Face scan saved on this device.');
+  showFace();
+};
+
+$('btn-face-remove').onclick = async () => {
+  myFace = null;
+  await removeMyFace().catch(() => {});
+  showFace();
+};
+
+(async () => {
+  // ?face=URL loads a scan from the dev server (faces/ is never published).
+  if (params.get('face')) {
+    try {
+      const bytes = await (await fetch(params.get('face'))).arrayBuffer();
+      myFace = { name: params.get('face').split('/').pop(), bytes };
+    } catch (e) { console.warn('[face] could not fetch', e); }
+  } else myFace = await loadMyFace();
+  showFace();
+})();
 
 if (params.get('voice') === '0') $('chk-voice').checked = false;
 const room = params.get('room');

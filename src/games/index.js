@@ -9,6 +9,7 @@ import { Climb } from './climb/climb.js';
 import { Rhythm } from './rhythm/rhythm.js';
 import { Pizza } from './pizza/pizza.js';
 import { BulletTime } from './bullettime/bullettime.js';
+import { FaceLab } from './facelab/facelab.js';
 
 export const GAMES = {
   lobby: Lobby,
@@ -22,5 +23,6 @@ export const GAMES = {
   rhythm: Rhythm,
   pizza: Pizza,
   bullettime: BulletTime,
+  facelab: FaceLab,
 };
 

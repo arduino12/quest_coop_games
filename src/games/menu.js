@@ -12,4 +12,5 @@ export const MENU = [
   { id: 'bombsquad', label: 'Bomb Squad', accent: COOP },
   { id: 'pizza', label: 'Pizza Rush', accent: COOP },
   { id: 'bullettime', label: 'Bullet Time', accent: COOP },
+  { id: 'facelab', label: 'Face Lab', accent: '#b06bff' },
 ];
