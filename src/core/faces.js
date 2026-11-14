@@ -11,7 +11,10 @@ const CALIB_KEY = 'qcg-face-calib';
 // Defaults match EXStar scans, which come out with the face toward -y and the crown toward +x;
 // lift drops the box center (about the nose) so the eyes sit where the headset is.
 // neck is the length of the body's neck under the head: 0 when the scan includes its own neck.
-export const DEFAULT_CALIB = { yaw: 90, pitch: 0, roll: 90, scale: 1, lift: -0.03, neck: 0 };
+// bright / contrast / sat / warm correct the scan's colors (neutral: 0 / 1 / 1 / 0). Scans come out
+// pale and grey, so the default adds a little contrast, color and warmth.
+export const DEFAULT_COLOR = { bright: 0.02, contrast: 1.1, sat: 1.3, warm: 0.05 };
+export const DEFAULT_CALIB = { yaw: 90, pitch: 0, roll: 90, scale: 1, lift: -0.03, neck: 0, ...DEFAULT_COLOR };
 
 function db() {
   return new Promise((resolve, reject) => {
@@ -69,6 +72,7 @@ export async function parseFace(bytes) {
     if (!o.isMesh) return;
     triangles += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
     o.material.side = THREE.DoubleSide; // mirrors flip triangle winding
+    addColorCorrection(o.material);
   });
   const box = new THREE.Box3().setFromObject(model);
   return { model, triangles: Math.round(triangles), size: box.getSize(new THREE.Vector3()) };
@@ -90,6 +94,41 @@ export function applyCalib(inner, c) {
   inner.rotation.set(d(c.pitch), d(c.yaw), d(c.roll), 'YXZ');
   inner.scale.setScalar(c.scale);
   inner.position.set(0, c.lift, 0);
+  inner.traverse((o) => {
+    const cc = o.material?.userData?.cc;
+    if (!cc) return;
+    cc.uBright.value = c.bright ?? 0;
+    cc.uContrast.value = c.contrast ?? 1;
+    cc.uSat.value = c.sat ?? 1;
+    cc.uWarm.value = c.warm ?? 0;
+  });
+}
+
+// Adds brightness / contrast / saturation / warmth to a material, done on the GPU after the texture
+// is sampled (in an approximate sRGB space so the steps feel even). The values live in uniforms, so
+// changing them never recompiles the shader.
+export function addColorCorrection(material) {
+  if (material.userData.cc) return;
+  const cc = { uBright: { value: 0 }, uContrast: { value: 1 }, uSat: { value: 1 }, uWarm: { value: 0 } };
+  material.userData.cc = cc;
+  material.customProgramCacheKey = () => 'face-color-correction';
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, cc);
+    shader.fragmentShader = `uniform float uBright;
+      uniform float uContrast;
+      uniform float uSat;
+      uniform float uWarm;
+      ${shader.fragmentShader}`.replace('#include <map_fragment>', `#include <map_fragment>
+      {
+        vec3 c = pow(max(diffuseColor.rgb, vec3(0.0)), vec3(1.0 / 2.2));
+        c = (c - 0.5) * uContrast + 0.5 + uBright;
+        float l = dot(c, vec3(0.299, 0.587, 0.114));
+        c = mix(vec3(l), c, uSat);
+        c *= vec3(1.0 + uWarm, 1.0 + uWarm * 0.35, 1.0 - uWarm);
+        diffuseColor.rgb = pow(clamp(c, 0.0, 1.0), vec3(2.2));
+      }`);
+  };
+  material.needsUpdate = true;
 }
 
 // Stand-in head for players without a scan (eyes at the origin, looking down -z).

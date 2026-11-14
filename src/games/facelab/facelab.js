@@ -3,7 +3,7 @@ import { Game } from '../../core/game.js';
 import { Panel, Label } from '../../core/ui3d.js';
 import { glowMat, gridFloor } from '../../core/env.js';
 import { Body } from '../../core/body.js';
-import { parseFace, makeHead, applyCalib, loadCalib, saveCalib, placeholderHead, DEFAULT_CALIB, PLACEHOLDER_NECK } from '../../core/faces.js';
+import { parseFace, makeHead, applyCalib, loadCalib, saveCalib, placeholderHead, DEFAULT_CALIB, DEFAULT_COLOR, PLACEHOLDER_NECK } from '../../core/faces.js';
 
 const MIRROR_Z = -0.75;
 const BUST_EYES = new THREE.Vector3(0, 1.55, -0.9);
@@ -75,6 +75,10 @@ export class FaceLab extends Game {
     this.panel.mesh.position.set(x + 0.95, 1.3, -0.55);
     this.panel.mesh.rotation.y = -0.75;
     root.add(this.panel.mesh);
+    this.colorPanel = this.app.ui.add(new Panel({ w: 0.9, h: 0.85, res: 768, cols: 2, accent: '#ffb347' }));
+    this.colorPanel.mesh.position.set(x - 0.95, 1.3, -0.55);
+    this.colorPanel.mesh.rotation.y = 0.75;
+    root.add(this.colorPanel.mesh);
     this.title = new Label('FACE LAB', { w: 1.2, h: 0.18, color: '#b06bff' });
     this.title.mesh.position.set(x, 2.45, -1.25);
     root.add(this.title.mesh);
@@ -127,6 +131,7 @@ export class FaceLab extends Game {
   }
 
   refresh() {
+    this.refreshColor();
     const c = this.calib;
     const i = this.info;
     const lines = !this.faceRef
@@ -160,6 +165,28 @@ export class FaceLab extends Game {
         { label: 'Neck +', onClick: () => this.change((k) => { k.neck = Math.min(0.2, cm(k.neck + 0.01)); }) },
         { label: 'Save', accent: '#7dff8a', onClick: () => this.save() },
         { label: 'Menu', onClick: () => this.app.requestGame('lobby') },
+      ],
+    });
+  }
+
+  refreshColor() {
+    const c = this.calib;
+    const r2 = (v) => Math.round(v * 100) / 100;
+    const sign = (v) => (v > 0 ? `+${v}` : `${v}`);
+    this.colorPanel.set({
+      title: 'Face color',
+      lines: [`bright ${sign(r2(c.bright))}  contrast ${r2(c.contrast)}  color ${r2(c.sat)}  warm ${sign(r2(c.warm))}`],
+      buttons: [
+        { label: 'Darker', onClick: () => this.change((k) => { k.bright = r2(k.bright - 0.03); }) },
+        { label: 'Brighter', onClick: () => this.change((k) => { k.bright = r2(k.bright + 0.03); }) },
+        { label: 'Contrast −', onClick: () => this.change((k) => { k.contrast = r2(Math.max(0.5, k.contrast - 0.05)); }) },
+        { label: 'Contrast +', onClick: () => this.change((k) => { k.contrast = r2(Math.min(2, k.contrast + 0.05)); }) },
+        { label: 'Paler', onClick: () => this.change((k) => { k.sat = r2(Math.max(0, k.sat - 0.1)); }) },
+        { label: 'More color', onClick: () => this.change((k) => { k.sat = r2(Math.min(2.5, k.sat + 0.1)); }) },
+        { label: 'Cooler', onClick: () => this.change((k) => { k.warm = r2(Math.max(-0.3, k.warm - 0.02)); }) },
+        { label: 'Warmer', onClick: () => this.change((k) => { k.warm = r2(Math.min(0.3, k.warm + 0.02)); }) },
+        { label: 'Reset color', onClick: () => this.change((k) => Object.assign(k, DEFAULT_COLOR)) },
+        { label: 'Save', accent: '#7dff8a', onClick: () => this.save() },
       ],
     });
   }

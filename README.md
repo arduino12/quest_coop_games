@@ -97,7 +97,8 @@ Face scans stay private: they are never committed to this repository or put on t
 3. On the start page in the Quest Browser, press **Choose face file** and pick it. It is stored in the headset's
    browser only.
 4. In VR open **Face Lab**: size, turn, nod, tilt, height, **neck** length, auto-spin, body on/off, and **Mirror**
-   mode, where the scan becomes the head of a body that copies your movements. The head turns around the base
+   mode, where the scan becomes the head of a body that copies your movements. The **Face color** panel on the left
+   fixes pale or grey scans (brighter / darker, contrast, more color, warmer / cooler). The head turns around the base
    of the neck, so a scan that includes its own neck stays attached: set **Neck** to 0 for those. **Save** keeps
    that setup for your avatar.
 5. In every multiplayer game your partner sees you as a body with your face (and you see theirs). Faces go
